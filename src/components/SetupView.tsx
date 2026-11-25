@@ -1,15 +1,22 @@
 import React from 'react';
-import { Plus, Trash2, Shuffle, AlertCircle, Gift } from 'lucide-react';
+import { Plus, Trash2, Shuffle, AlertCircle, Gift, Calendar, X } from 'lucide-react';
 import { CurrencyCode, ParticipantInput } from '../types';
-import { CURRENCY_OPTIONS, ValidationResult, formatPrice } from '../utils/exchange';
+import {
+  CURRENCY_OPTIONS,
+  ValidationResult,
+  formatExchangeDate,
+  formatPrice,
+} from '../utils/exchange';
 
 interface SetupViewProps {
   minPrice: string;
   currency: CurrencyCode;
+  exchangeDate: string;
   participants: ParticipantInput[];
   validation: ValidationResult | null;
   onMinPriceChange: (val: string) => void;
   onCurrencyChange: (val: CurrencyCode) => void;
+  onExchangeDateChange: (val: string) => void;
   onParticipantChange: (id: string, field: keyof Omit<ParticipantInput, 'id'>, val: string) => void;
   onAddParticipant: () => void;
   onRemoveParticipant: (id: string) => void;
@@ -19,10 +26,12 @@ interface SetupViewProps {
 export const SetupView: React.FC<SetupViewProps> = ({
   minPrice,
   currency,
+  exchangeDate,
   participants,
   validation,
   onMinPriceChange,
   onCurrencyChange,
+  onExchangeDateChange,
   onParticipantChange,
   onAddParticipant,
   onRemoveParticipant,
@@ -30,10 +39,11 @@ export const SetupView: React.FC<SetupViewProps> = ({
 }) => {
   const numericPrice = Number(minPrice);
   const displayPrice =
-    minPrice.trim() !== '' && !Number.isNaN(numericPrice) && numericPrice >= 0
+    minPrice.trim() !== '' && !Number.isNaN(numericPrice) && Number.isFinite(numericPrice) && numericPrice >= 0
       ? formatPrice(numericPrice, currency)
       : 'Por definir';
 
+  const formattedDate = formatExchangeDate(exchangeDate);
   const namedCount = participants.filter((p) => p.name.trim().length > 0).length;
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -44,29 +54,29 @@ export const SetupView: React.FC<SetupViewProps> = ({
   return (
     <form onSubmit={handleSubmit} noValidate className="w-full">
       <div className="mb-8 lg:mb-10 max-w-2xl">
-        <p className="text-xs font-medium tracking-widest uppercase text-[#1B4332] mb-2">
+        <p className="text-xs font-medium tracking-widest uppercase text-[#1B4332] dark:text-[#84D2AA] mb-2">
           Configuración del intercambio
         </p>
-        <h1 className="font-display text-3xl sm:text-4xl lg:text-[2.75rem] font-semibold tracking-tight text-[#1A1816] leading-[1.12] [text-wrap:balance]">
+        <h1 className="font-display text-3xl sm:text-4xl lg:text-[2.75rem] font-semibold tracking-tight text-[#1A1816] dark:text-[#F3EFE7] leading-[1.12] [text-wrap:balance]">
           Organiza tu intercambio de regalo secreto
         </h1>
-        <p className="mt-3 text-base text-[#57524A] leading-relaxed">
+        <p className="mt-3 text-base text-[#57524A] dark:text-[#B5ADA1] leading-relaxed">
           Define el presupuesto mínimo y agrega a cada participante con sus gustos y un mensaje personal. Al iniciar el sorteo recibirás un enlace privado para compartir.
         </p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
         {/* Columna izquierda: Configuración general y botón de sorteo */}
-        <aside className="lg:col-span-4 lg:sticky lg:top-8 bg-white border border-[#E4DFD5] rounded-2xl p-6">
-          <div className="flex items-center gap-3 pb-5 border-b border-[#EFECE6]">
-            <div className="w-10 h-10 rounded-xl bg-[#1B4332]/8 text-[#1B4332] flex items-center justify-center shrink-0">
+        <aside className="lg:col-span-4 lg:sticky lg:top-8 bg-white dark:bg-[#1C1A17] border border-[#E4DFD5] dark:border-[#2E2A24] rounded-2xl p-6 transition-colors duration-200">
+          <div className="flex items-center gap-3 pb-5 border-b border-[#EFECE6] dark:border-[#2A2621]">
+            <div className="w-10 h-10 rounded-xl bg-[#1B4332]/8 dark:bg-[#74C69D]/12 text-[#1B4332] dark:text-[#84D2AA] flex items-center justify-center shrink-0">
               <Gift className="w-5 h-5" aria-hidden="true" />
             </div>
             <div>
-              <h2 className="font-display text-lg font-semibold text-[#1A1816]">
+              <h2 className="font-display text-lg font-semibold text-[#1A1816] dark:text-[#F3EFE7]">
                 Reglas del regalo
               </h2>
-              <p className="text-xs text-[#6E685F]">
+              <p className="text-xs text-[#6E685F] dark:text-[#A39B8F]">
                 Visible para todos los participantes
               </p>
             </div>
@@ -76,7 +86,7 @@ export const SetupView: React.FC<SetupViewProps> = ({
             <div>
               <label
                 htmlFor="min-price"
-                className="block text-sm font-medium text-[#1A1816] mb-2"
+                className="block text-sm font-medium text-[#1A1816] dark:text-[#F3EFE7] mb-2"
               >
                 Precio mínimo del regalo
               </label>
@@ -91,14 +101,14 @@ export const SetupView: React.FC<SetupViewProps> = ({
                     value={minPrice}
                     onChange={(e) => onMinPriceChange(e.target.value)}
                     placeholder="300"
-                    className="w-full min-h-[46px] px-3.5 py-2.5 bg-[#FAF8F4] border border-[#DDD6CA] rounded-xl text-base text-[#1A1816] tabular-nums placeholder:text-[#9A9388] focus:outline-none focus:ring-2 focus:ring-[#1B4332]/25 focus:border-[#1B4332] transition-colors"
+                    className="w-full min-h-[46px] px-3.5 py-2.5 bg-[#FAF8F4] dark:bg-[#141311] border border-[#DDD6CA] dark:border-[#343029] rounded-xl text-base text-[#1A1816] dark:text-[#F3EFE7] tabular-nums placeholder:text-[#9A9388] dark:placeholder:text-[#6E675D] focus:outline-none focus:ring-2 focus:ring-[#1B4332]/25 dark:focus:ring-[#74C69D]/30 focus:border-[#1B4332] dark:focus:border-[#74C69D] transition-colors"
                   />
                 </div>
                 <select
                   aria-label="Moneda"
                   value={currency}
                   onChange={(e) => onCurrencyChange(e.target.value as CurrencyCode)}
-                  className="min-h-[46px] px-3 py-2.5 bg-[#FAF8F4] border border-[#DDD6CA] rounded-xl text-sm font-medium text-[#1A1816] focus:outline-none focus:ring-2 focus:ring-[#1B4332]/25 focus:border-[#1B4332] transition-colors cursor-pointer"
+                  className="min-h-[46px] px-3 py-2.5 bg-[#FAF8F4] dark:bg-[#141311] border border-[#DDD6CA] dark:border-[#343029] rounded-xl text-sm font-medium text-[#1A1816] dark:text-[#F3EFE7] focus:outline-none focus:ring-2 focus:ring-[#1B4332]/25 dark:focus:ring-[#74C69D]/30 focus:border-[#1B4332] dark:focus:border-[#74C69D] transition-colors cursor-pointer"
                 >
                   {CURRENCY_OPTIONS.map((opt) => (
                     <option key={opt.value} value={opt.value}>
@@ -107,28 +117,71 @@ export const SetupView: React.FC<SetupViewProps> = ({
                   ))}
                 </select>
               </div>
-              <p className="mt-1.5 text-xs text-[#6E685F]">
+              <p className="mt-1.5 text-xs text-[#6E685F] dark:text-[#A39B8F]">
                 Sirve como referencia mínima para orientar las compras.
               </p>
             </div>
 
-            <div className="pt-4 border-t border-[#EFECE6] space-y-2">
+            <div>
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <label
+                  htmlFor="exchange-date"
+                  className="block text-sm font-medium text-[#1A1816] dark:text-[#F3EFE7]"
+                >
+                  Fecha del intercambio
+                </label>
+                {exchangeDate && (
+                  <button
+                    type="button"
+                    onClick={() => onExchangeDateChange('')}
+                    className="text-xs font-medium text-[#6E685F] dark:text-[#A39B8F] hover:text-[#9B2226] dark:hover:text-[#F28B82] inline-flex items-center gap-1 transition-colors cursor-pointer"
+                  >
+                    <X className="w-3 h-3" aria-hidden="true" />
+                    <span>Quitar</span>
+                  </button>
+                )}
+              </div>
+              <div className="relative">
+                <Calendar
+                  className="w-4 h-4 text-[#857E74] dark:text-[#968E83] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none"
+                  aria-hidden="true"
+                />
+                <input
+                  id="exchange-date"
+                  type="date"
+                  value={exchangeDate}
+                  onChange={(e) => onExchangeDateChange(e.target.value)}
+                  className="w-full min-h-[46px] pl-10 pr-3.5 py-2.5 bg-[#FAF8F4] dark:bg-[#141311] border border-[#DDD6CA] dark:border-[#343029] rounded-xl text-sm text-[#1A1816] dark:text-[#F3EFE7] [color-scheme:light] dark:[color-scheme:dark] focus:outline-none focus:ring-2 focus:ring-[#1B4332]/25 dark:focus:ring-[#74C69D]/30 focus:border-[#1B4332] dark:focus:border-[#74C69D] transition-colors"
+                />
+              </div>
+              <p className="mt-1.5 text-xs text-[#6E685F] dark:text-[#A39B8F]">
+                Opcional · Se incluirá en la tarjeta de cada participante.
+              </p>
+            </div>
+
+            <div className="pt-4 border-t border-[#EFECE6] dark:border-[#2A2621] space-y-2">
               <div className="flex items-center justify-between text-sm">
-                <span className="text-[#6E685F]">Participantes agregados</span>
-                <span className="font-semibold text-[#1A1816] tabular-nums">
+                <span className="text-[#6E685F] dark:text-[#A39B8F]">Participantes agregados</span>
+                <span className="font-semibold text-[#1A1816] dark:text-[#F3EFE7] tabular-nums">
                   {participants.length} {participants.length === 1 ? 'persona' : 'personas'}
                 </span>
               </div>
               <div className="flex items-center justify-between text-sm">
-                <span className="text-[#6E685F]">Con nombre completo</span>
-                <span className="font-medium text-[#1A1816] tabular-nums">
+                <span className="text-[#6E685F] dark:text-[#A39B8F]">Con nombre completo</span>
+                <span className="font-medium text-[#1A1816] dark:text-[#F3EFE7] tabular-nums">
                   {namedCount} de {participants.length}
                 </span>
               </div>
               <div className="flex items-center justify-between text-sm">
-                <span className="text-[#6E685F]">Mínimo del regalo</span>
-                <span className="font-semibold text-[#1B4332] tabular-nums">
+                <span className="text-[#6E685F] dark:text-[#A39B8F]">Mínimo del regalo</span>
+                <span className="font-semibold text-[#1B4332] dark:text-[#84D2AA] tabular-nums">
                   {displayPrice}
+                </span>
+              </div>
+              <div className="flex items-start justify-between gap-3 text-sm">
+                <span className="text-[#6E685F] dark:text-[#A39B8F] shrink-0">Fecha</span>
+                <span className="font-medium text-[#1A1816] dark:text-[#F3EFE7] text-right">
+                  {formattedDate ?? 'Sin fecha'}
                 </span>
               </div>
             </div>
@@ -136,7 +189,7 @@ export const SetupView: React.FC<SetupViewProps> = ({
             {validation && !validation.valid && (
               <div
                 role="alert"
-                className="p-3.5 rounded-xl bg-[#9B2226]/6 border border-[#9B2226]/25 text-[#7F1D1D] text-sm space-y-1.5"
+                className="p-3.5 rounded-xl bg-[#9B2226]/6 dark:bg-[#9B2226]/18 border border-[#9B2226]/25 dark:border-[#E57373]/35 text-[#7F1D1D] dark:text-[#F7B2B2] text-sm space-y-1.5"
               >
                 <div className="flex items-center gap-2 font-semibold">
                   <AlertCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
@@ -152,13 +205,13 @@ export const SetupView: React.FC<SetupViewProps> = ({
 
             <button
               type="submit"
-              className="w-full min-h-[48px] px-5 py-3 bg-[#1B4332] hover:bg-[#143326] active:scale-[0.99] text-white font-semibold text-sm rounded-xl flex items-center justify-center gap-2.5 transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1B4332] focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+              className="w-full min-h-[48px] px-5 py-3 bg-[#1B4332] hover:bg-[#143326] dark:bg-[#2D6A4F] dark:hover:bg-[#38805F] active:scale-[0.99] text-white font-semibold text-sm rounded-xl flex items-center justify-center gap-2.5 transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1B4332] dark:focus-visible:ring-[#74C69D] focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-[#1C1A17]"
             >
               <Shuffle className="w-4 h-4 shrink-0" aria-hidden="true" />
               <span className="whitespace-nowrap">Iniciar sorteo</span>
             </button>
 
-            <p className="text-xs text-[#6E685F] leading-relaxed">
+            <p className="text-xs text-[#6E685F] dark:text-[#A39B8F] leading-relaxed">
               Requisito: al menos 3 participantes con nombres distintos. Nadie podrá tocarse a sí mismo.
             </p>
           </div>
@@ -166,12 +219,12 @@ export const SetupView: React.FC<SetupViewProps> = ({
 
         {/* Columna derecha: Lista de participantes */}
         <section className="lg:col-span-8 space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-4 pb-2 border-b border-[#E4DFD5]">
+          <div className="flex flex-wrap items-center justify-between gap-4 pb-2 border-b border-[#E4DFD5] dark:border-[#2A2621]">
             <div className="flex items-baseline gap-2.5">
-              <h2 className="font-display text-xl sm:text-2xl font-semibold text-[#1A1816]">
+              <h2 className="font-display text-xl sm:text-2xl font-semibold text-[#1A1816] dark:text-[#F3EFE7]">
                 Participantes
               </h2>
-              <span className="text-sm text-[#6E685F] tabular-nums">
+              <span className="text-sm text-[#6E685F] dark:text-[#A39B8F] tabular-nums">
                 · {participants.length} en la lista
               </span>
             </div>
@@ -179,9 +232,9 @@ export const SetupView: React.FC<SetupViewProps> = ({
             <button
               type="button"
               onClick={onAddParticipant}
-              className="min-h-[44px] px-4 py-2 bg-white hover:bg-[#F2EFE9] border border-[#D8D1C5] text-[#1A1816] text-sm font-medium rounded-xl inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1B4332]"
+              className="min-h-[44px] px-4 py-2 bg-white dark:bg-[#1C1A17] hover:bg-[#F2EFE9] dark:hover:bg-[#25221E] border border-[#D8D1C5] dark:border-[#343029] text-[#1A1816] dark:text-[#F3EFE7] text-sm font-medium rounded-xl inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1B4332] dark:focus-visible:ring-[#74C69D]"
             >
-              <Plus className="w-4 h-4 text-[#1B4332]" aria-hidden="true" />
+              <Plus className="w-4 h-4 text-[#1B4332] dark:text-[#84D2AA]" aria-hidden="true" />
               <span>Añadir participante</span>
             </button>
           </div>
@@ -196,16 +249,18 @@ export const SetupView: React.FC<SetupViewProps> = ({
               return (
                 <div
                   key={participant.id}
-                  className={`bg-white border rounded-2xl p-5 sm:p-6 transition-colors ${
-                    hasNameError ? 'border-[#9B2226]/50' : 'border-[#E4DFD5]'
+                  className={`bg-white dark:bg-[#1C1A17] border rounded-2xl p-5 sm:p-6 transition-colors ${
+                    hasNameError
+                      ? 'border-[#9B2226]/50 dark:border-[#E57373]/55'
+                      : 'border-[#E4DFD5] dark:border-[#2E2A24]'
                   }`}
                 >
                   <div className="flex items-center justify-between gap-4 mb-4">
                     <div className="flex items-baseline gap-2.5">
-                      <span className="font-mono text-xs font-medium text-[#6E685F] tabular-nums">
+                      <span className="font-mono text-xs font-medium text-[#6E685F] dark:text-[#A39B8F] tabular-nums">
                         {indexLabel}.
                       </span>
-                      <span className="text-sm font-semibold text-[#1A1816]">
+                      <span className="text-sm font-semibold text-[#1A1816] dark:text-[#F3EFE7]">
                         {participant.name.trim()
                           ? participant.name.trim()
                           : `Participante ${index + 1}`}
@@ -217,7 +272,7 @@ export const SetupView: React.FC<SetupViewProps> = ({
                       onClick={() => onRemoveParticipant(participant.id)}
                       disabled={participants.length <= 1}
                       aria-label={`Eliminar participante ${participant.name.trim() || index + 1}`}
-                      className="min-h-[44px] px-3 py-2 rounded-xl text-xs font-medium text-[#6E685F] hover:text-[#9B2226] hover:bg-[#9B2226]/6 disabled:opacity-35 disabled:pointer-events-none inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#9B2226]"
+                      className="min-h-[44px] px-3 py-2 rounded-xl text-xs font-medium text-[#6E685F] dark:text-[#A39B8F] hover:text-[#9B2226] dark:hover:text-[#F28B82] hover:bg-[#9B2226]/6 dark:hover:bg-[#9B2226]/18 disabled:opacity-35 disabled:pointer-events-none inline-flex items-center gap-1.5 transition-colors cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#9B2226] dark:focus-visible:ring-[#E57373]"
                     >
                       <Trash2 className="w-4 h-4" aria-hidden="true" />
                       <span>Eliminar</span>
@@ -228,9 +283,9 @@ export const SetupView: React.FC<SetupViewProps> = ({
                     <div className="sm:col-span-2">
                       <label
                         htmlFor={`name-${participant.id}`}
-                        className="block text-xs font-semibold text-[#3F3B35] mb-1.5"
+                        className="block text-xs font-semibold text-[#3F3B35] dark:text-[#D9D2C7] mb-1.5"
                       >
-                        Nombre <span className="text-[#9B2226]">*</span>
+                        Nombre <span className="text-[#9B2226] dark:text-[#F28B82]">*</span>
                       </label>
                       <input
                         id={`name-${participant.id}`}
@@ -241,19 +296,19 @@ export const SetupView: React.FC<SetupViewProps> = ({
                         }
                         placeholder="Ej. Sofía Martínez"
                         autoComplete="off"
-                        className={`w-full min-h-[44px] px-3.5 py-2.5 bg-[#FAF8F4] border rounded-xl text-sm text-[#1A1816] placeholder:text-[#9A9388] focus:outline-none focus:ring-2 transition-colors ${
+                        className={`w-full min-h-[44px] px-3.5 py-2.5 bg-[#FAF8F4] dark:bg-[#141311] border rounded-xl text-sm text-[#1A1816] dark:text-[#F3EFE7] placeholder:text-[#9A9388] dark:placeholder:text-[#6E675D] focus:outline-none focus:ring-2 transition-colors ${
                           hasNameError
-                            ? 'border-[#9B2226] focus:ring-[#9B2226]/20 focus:border-[#9B2226]'
-                            : 'border-[#DDD6CA] focus:ring-[#1B4332]/20 focus:border-[#1B4332]'
+                            ? 'border-[#9B2226] dark:border-[#E57373] focus:ring-[#9B2226]/20 dark:focus:ring-[#E57373]/25 focus:border-[#9B2226] dark:focus:border-[#E57373]'
+                            : 'border-[#DDD6CA] dark:border-[#343029] focus:ring-[#1B4332]/20 dark:focus:ring-[#74C69D]/25 focus:border-[#1B4332] dark:focus:border-[#74C69D]'
                         }`}
                       />
                       {isEmptyError && (
-                        <p className="mt-1.5 text-xs font-medium text-[#9B2226]">
+                        <p className="mt-1.5 text-xs font-medium text-[#9B2226] dark:text-[#F28B82]">
                           Escribe el nombre de este participante.
                         </p>
                       )}
                       {isDuplicateError && (
-                        <p className="mt-1.5 text-xs font-medium text-[#9B2226]">
+                        <p className="mt-1.5 text-xs font-medium text-[#9B2226] dark:text-[#F28B82]">
                           Este nombre está repetido. Usa un apellido o apodo para distinguirlo.
                         </p>
                       )}
@@ -262,7 +317,7 @@ export const SetupView: React.FC<SetupViewProps> = ({
                     <div>
                       <label
                         htmlFor={`likes-${participant.id}`}
-                        className="block text-xs font-semibold text-[#3F3B35] mb-1.5"
+                        className="block text-xs font-semibold text-[#3F3B35] dark:text-[#D9D2C7] mb-1.5"
                       >
                         Gustos o ideas de regalo
                       </label>
@@ -274,14 +329,14 @@ export const SetupView: React.FC<SetupViewProps> = ({
                           onParticipantChange(participant.id, 'likes', e.target.value)
                         }
                         placeholder="Café en grano, libros de ciencia ficción, velas aromáticas…"
-                        className="w-full px-3.5 py-2.5 bg-[#FAF8F4] border border-[#DDD6CA] rounded-xl text-sm text-[#1A1816] placeholder:text-[#9A9388] focus:outline-none focus:ring-2 focus:ring-[#1B4332]/20 focus:border-[#1B4332] transition-colors resize-y"
+                        className="w-full px-3.5 py-2.5 bg-[#FAF8F4] dark:bg-[#141311] border border-[#DDD6CA] dark:border-[#343029] rounded-xl text-sm text-[#1A1816] dark:text-[#F3EFE7] placeholder:text-[#9A9388] dark:placeholder:text-[#6E675D] focus:outline-none focus:ring-2 focus:ring-[#1B4332]/20 dark:focus:ring-[#74C69D]/25 focus:border-[#1B4332] dark:focus:border-[#74C69D] transition-colors resize-y"
                       />
                     </div>
 
                     <div>
                       <label
                         htmlFor={`message-${participant.id}`}
-                        className="block text-xs font-semibold text-[#3F3B35] mb-1.5"
+                        className="block text-xs font-semibold text-[#3F3B35] dark:text-[#D9D2C7] mb-1.5"
                       >
                         Mensaje o pista personal
                       </label>
@@ -293,7 +348,7 @@ export const SetupView: React.FC<SetupViewProps> = ({
                           onParticipantChange(participant.id, 'message', e.target.value)
                         }
                         placeholder="Ej. Soy talla M, prefiero tonos oscuros o evitar chocolates con nuez"
-                        className="w-full px-3.5 py-2.5 bg-[#FAF8F4] border border-[#DDD6CA] rounded-xl text-sm text-[#1A1816] placeholder:text-[#9A9388] focus:outline-none focus:ring-2 focus:ring-[#1B4332]/20 focus:border-[#1B4332] transition-colors resize-y"
+                        className="w-full px-3.5 py-2.5 bg-[#FAF8F4] dark:bg-[#141311] border border-[#DDD6CA] dark:border-[#343029] rounded-xl text-sm text-[#1A1816] dark:text-[#F3EFE7] placeholder:text-[#9A9388] dark:placeholder:text-[#6E675D] focus:outline-none focus:ring-2 focus:ring-[#1B4332]/20 dark:focus:ring-[#74C69D]/25 focus:border-[#1B4332] dark:focus:border-[#74C69D] transition-colors resize-y"
                       />
                     </div>
                   </div>
@@ -302,19 +357,36 @@ export const SetupView: React.FC<SetupViewProps> = ({
             })}
           </div>
 
+          {validation && !validation.valid && (
+            <div
+              role="alert"
+              className="lg:hidden p-3.5 rounded-xl bg-[#9B2226]/6 dark:bg-[#9B2226]/18 border border-[#9B2226]/25 dark:border-[#E57373]/35 text-[#7F1D1D] dark:text-[#F7B2B2] text-sm space-y-1.5"
+            >
+              <div className="flex items-center gap-2 font-semibold">
+                <AlertCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
+                <span>Revisa antes de sortear</span>
+              </div>
+              <ul className="list-disc pl-5 space-y-1 text-xs leading-relaxed">
+                {validation.errors.map((err, idx) => (
+                  <li key={idx}>{err}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           <div className="pt-2 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
             <button
               type="button"
               onClick={onAddParticipant}
-              className="min-h-[46px] px-4 py-2.5 bg-white hover:bg-[#F2EFE9] border border-dashed border-[#C9C0B1] text-[#1A1816] text-sm font-medium rounded-xl inline-flex items-center justify-center gap-2 transition-colors cursor-pointer whitespace-nowrap"
+              className="min-h-[46px] px-4 py-2.5 bg-white dark:bg-[#1C1A17] hover:bg-[#F2EFE9] dark:hover:bg-[#25221E] border border-dashed border-[#C9C0B1] dark:border-[#3B362E] text-[#1A1816] dark:text-[#F3EFE7] text-sm font-medium rounded-xl inline-flex items-center justify-center gap-2 transition-colors cursor-pointer whitespace-nowrap"
             >
-              <Plus className="w-4 h-4 text-[#1B4332]" aria-hidden="true" />
+              <Plus className="w-4 h-4 text-[#1B4332] dark:text-[#84D2AA]" aria-hidden="true" />
               <span>Añadir otro participante</span>
             </button>
 
             <button
               type="submit"
-              className="lg:hidden min-h-[48px] px-5 py-3 bg-[#1B4332] hover:bg-[#143326] text-white font-semibold text-sm rounded-xl flex items-center justify-center gap-2 transition-colors cursor-pointer"
+              className="lg:hidden min-h-[48px] px-5 py-3 bg-[#1B4332] hover:bg-[#143326] dark:bg-[#2D6A4F] dark:hover:bg-[#38805F] text-white font-semibold text-sm rounded-xl flex items-center justify-center gap-2 transition-colors cursor-pointer"
             >
               <Shuffle className="w-4 h-4" aria-hidden="true" />
               <span>Iniciar sorteo</span>

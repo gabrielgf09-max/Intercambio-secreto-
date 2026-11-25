@@ -17,6 +17,7 @@ export interface EncodedParticipant {
 export interface ExchangePayload {
   precioMinimo: number;
   moneda: CurrencyCode;
+  fechaIntercambio?: string;
   participantes: EncodedParticipant[];
 }
 

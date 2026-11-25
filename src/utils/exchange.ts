@@ -43,6 +43,30 @@ export function formatPrice(amount: number, currency: CurrencyCode = '$'): strin
   return `$${formattedNumber} ${currency}`;
 }
 
+export function formatExchangeDate(isoDate?: string): string | null {
+  if (!isoDate) return null;
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate.trim());
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const localDate = new Date(year, month - 1, day);
+  if (
+    localDate.getFullYear() !== year ||
+    localDate.getMonth() !== month - 1 ||
+    localDate.getDate() !== day
+  ) {
+    return null;
+  }
+  const formatted = new Intl.DateTimeFormat('es-MX', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  }).format(localDate);
+  return formatted.charAt(0).toUpperCase() + formatted.slice(1);
+}
+
 /**
  * Codifica un objeto JSON a Base64 URL-safe con soporte completo UTF-8.
  */
@@ -66,12 +90,20 @@ export function decodePayloadFromHash(hash: string): {
   data: ExchangePayload | null;
   error: string | null;
 } {
-  const clean = hash.startsWith('#') ? hash.slice(1).trim() : hash.trim();
+  let clean = (hash.startsWith('#') ? hash.slice(1) : hash).replace(/\s+/g, '');
   if (!clean) {
     return { data: null, error: null };
   }
 
   try {
+    if (clean.includes('%')) {
+      try {
+        clean = decodeURIComponent(clean);
+      } catch {
+        // Keep original string if percent-decoding fails
+      }
+    }
+
     const base64 = clean.replace(/-/g, '+').replace(/_/g, '/');
     const padLength = (4 - (base64.length % 4)) % 4;
     const padded = base64 + '='.repeat(padLength);
@@ -87,6 +119,7 @@ export function decodePayloadFromHash(hash: string): {
       !parsed ||
       typeof parsed.precioMinimo !== 'number' ||
       !Number.isFinite(parsed.precioMinimo) ||
+      parsed.precioMinimo < 0 ||
       !Array.isArray(parsed.participantes) ||
       parsed.participantes.length < 3
     ) {
@@ -96,11 +129,15 @@ export function decodePayloadFromHash(hash: string): {
       };
     }
 
+    const validCurrency = CURRENCY_OPTIONS.some((c) => c.value === parsed.moneda)
+      ? (parsed.moneda as CurrencyCode)
+      : '$';
+
     const participantes: EncodedParticipant[] = parsed.participantes.map((p) => ({
-      nombre: typeof p.nombre === 'string' ? p.nombre.trim() : '',
-      mensaje: typeof p.mensaje === 'string' ? p.mensaje.trim() : '',
-      gustos: typeof p.gustos === 'string' ? p.gustos.trim() : '',
-      asignado: typeof p.asignado === 'string' ? p.asignado.trim() : '',
+      nombre: typeof p?.nombre === 'string' ? p.nombre.trim() : '',
+      mensaje: typeof p?.mensaje === 'string' ? p.mensaje.trim() : '',
+      gustos: typeof p?.gustos === 'string' ? p.gustos.trim() : '',
+      asignado: typeof p?.asignado === 'string' ? p.asignado.trim() : '',
     }));
 
     const hasInvalid = participantes.some((p) => !p.nombre || !p.asignado);
@@ -111,10 +148,17 @@ export function decodePayloadFromHash(hash: string): {
       };
     }
 
+    const validDate =
+      typeof parsed.fechaIntercambio === 'string' &&
+      formatExchangeDate(parsed.fechaIntercambio) !== null
+        ? parsed.fechaIntercambio.trim()
+        : undefined;
+
     return {
       data: {
         precioMinimo: parsed.precioMinimo,
-        moneda: (parsed.moneda as CurrencyCode) || '$',
+        moneda: validCurrency,
+        ...(validDate ? { fechaIntercambio: validDate } : {}),
         participantes,
       },
       error: null,
@@ -143,7 +187,12 @@ export function validateSetup(
   const emptyNameIds = new Set<string>();
 
   const parsedPrice = Number(minPriceInput);
-  if (minPriceInput.trim() === '' || Number.isNaN(parsedPrice) || parsedPrice < 0) {
+  if (
+    minPriceInput.trim() === '' ||
+    Number.isNaN(parsedPrice) ||
+    !Number.isFinite(parsedPrice) ||
+    parsedPrice < 0
+  ) {
     errors.push('Ingresa un precio mínimo válido (puede ser 0 o mayor).');
   }
 
