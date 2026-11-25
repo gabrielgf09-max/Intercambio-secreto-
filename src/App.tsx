@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Moon, Sun } from 'lucide-react';
 import { AppView, CurrencyCode, ExchangePayload, ParticipantInput } from './types';
 import {
+  CURRENCY_OPTIONS,
   ValidationResult,
   createEmptyParticipant,
   decodePayloadFromHash,
@@ -14,8 +15,63 @@ import { ConfirmationView } from './components/ConfirmationView';
 import { ParticipantView } from './components/ParticipantView';
 
 const THEME_STORAGE_KEY = 'amigo-secreto-theme';
+const DRAFT_STORAGE_KEY = 'amigo-secreto-draft';
 
 type ThemeMode = 'light' | 'dark';
+
+interface SetupDraft {
+  exchangeTitle: string;
+  minPrice: string;
+  currency: CurrencyCode;
+  exchangeDate: string;
+  participants: ParticipantInput[];
+}
+
+function getDefaultDraft(): SetupDraft {
+  return {
+    exchangeTitle: '',
+    minPrice: '250',
+    currency: '$',
+    exchangeDate: '',
+    participants: [
+      createEmptyParticipant(0),
+      createEmptyParticipant(1),
+      createEmptyParticipant(2),
+    ],
+  };
+}
+
+function loadSavedDraft(): SetupDraft {
+  if (typeof window === 'undefined') return getDefaultDraft();
+  try {
+    const raw = window.localStorage.getItem(DRAFT_STORAGE_KEY);
+    if (!raw) return getDefaultDraft();
+    const parsed = JSON.parse(raw) as Partial<SetupDraft>;
+    if (!parsed || !Array.isArray(parsed.participants) || parsed.participants.length === 0) {
+      return getDefaultDraft();
+    }
+    const validCurrency = CURRENCY_OPTIONS.some((c) => c.value === parsed.currency)
+      ? (parsed.currency as CurrencyCode)
+      : '$';
+    const participants: ParticipantInput[] = parsed.participants.map((p, idx) => ({
+      id: typeof p?.id === 'string' && p.id ? p.id : `restored-${idx}-${Date.now()}`,
+      name: typeof p?.name === 'string' ? p.name : '',
+      message: typeof p?.message === 'string' ? p.message : '',
+      likes: typeof p?.likes === 'string' ? p.likes : '',
+      excludeId: typeof p?.excludeId === 'string' ? p.excludeId : '',
+    }));
+
+    return {
+      exchangeTitle: typeof parsed.exchangeTitle === 'string' ? parsed.exchangeTitle : '',
+      minPrice: typeof parsed.minPrice === 'string' ? parsed.minPrice : '250',
+      currency: validCurrency,
+      exchangeDate: typeof parsed.exchangeDate === 'string' ? parsed.exchangeDate : '',
+      participants,
+    };
+  } catch {
+    return getDefaultDraft();
+  }
+}
 
 function getInitialTheme(): ThemeMode {
   if (typeof document !== 'undefined' && document.documentElement.classList.contains('dark')) {
@@ -78,18 +134,19 @@ function setUrlHashSilently(encodedHash: string) {
 
 export default function App() {
   const initialState = useMemo(() => getInitialHashState(), []);
+  const initialDraft = useMemo(() => loadSavedDraft(), []);
 
   const [theme, setTheme] = useState<ThemeMode>(() => getInitialTheme());
   const [view, setView] = useState<AppView>(initialState.view);
-  const [minPrice, setMinPrice] = useState<string>('250');
-  const [currency, setCurrency] = useState<CurrencyCode>('$');
-  const [exchangeDate, setExchangeDate] = useState<string>('');
-  const [participants, setParticipants] = useState<ParticipantInput[]>(() => [
-    createEmptyParticipant(0),
-    createEmptyParticipant(1),
-    createEmptyParticipant(2),
-  ]);
+  const [exchangeTitle, setExchangeTitle] = useState<string>(initialDraft.exchangeTitle);
+  const [minPrice, setMinPrice] = useState<string>(initialDraft.minPrice);
+  const [currency, setCurrency] = useState<CurrencyCode>(initialDraft.currency);
+  const [exchangeDate, setExchangeDate] = useState<string>(initialDraft.exchangeDate);
+  const [participants, setParticipants] = useState<ParticipantInput[]>(
+    initialDraft.participants
+  );
   const [validation, setValidation] = useState<ValidationResult | null>(null);
+  const [drawError, setDrawError] = useState<string | null>(null);
 
   const [confirmedPayload, setConfirmedPayload] = useState<ExchangePayload | null>(null);
   const [shareUrl, setShareUrl] = useState<string>('');
@@ -112,6 +169,21 @@ export default function App() {
       // Ignore storage access errors
     }
   }, [theme]);
+
+  useEffect(() => {
+    try {
+      const draft: SetupDraft = {
+        exchangeTitle,
+        minPrice,
+        currency,
+        exchangeDate,
+        participants,
+      };
+      window.localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draft));
+    } catch {
+      // Ignore storage quota/access errors
+    }
+  }, [exchangeTitle, minPrice, currency, exchangeDate, participants]);
 
   useEffect(() => {
     const handleHashChange = () => {
@@ -144,50 +216,69 @@ export default function App() {
     setParticipants((prev) =>
       prev.map((p) => (p.id === id ? { ...p, [field]: value } : p))
     );
-    if (validation) {
-      setValidation(null);
-    }
+    if (validation) setValidation(null);
+    if (drawError) setDrawError(null);
   };
 
   const handleAddParticipant = () => {
     setParticipants((prev) => [...prev, createEmptyParticipant(prev.length)]);
-    if (validation) {
-      setValidation(null);
-    }
+    if (validation) setValidation(null);
+    if (drawError) setDrawError(null);
   };
 
   const handleRemoveParticipant = (id: string) => {
     setParticipants((prev) => {
       if (prev.length <= 1) return prev;
-      return prev.filter((p) => p.id !== id);
+      return prev
+        .filter((p) => p.id !== id)
+        .map((p) => (p.excludeId === id ? { ...p, excludeId: '' } : p));
     });
-    if (validation) {
-      setValidation(null);
-    }
+    if (validation) setValidation(null);
+    if (drawError) setDrawError(null);
   };
 
   const handleMinPriceChange = (value: string) => {
     setMinPrice(value);
-    if (validation) {
-      setValidation(null);
-    }
+    if (validation) setValidation(null);
+  };
+
+  const handleResetDraft = () => {
+    const fresh = getDefaultDraft();
+    setExchangeTitle(fresh.exchangeTitle);
+    setMinPrice(fresh.minPrice);
+    setCurrency(fresh.currency);
+    setExchangeDate(fresh.exchangeDate);
+    setParticipants(fresh.participants);
+    setValidation(null);
+    setDrawError(null);
   };
 
   const handleStartDraw = () => {
     const result = validateSetup(participants, minPrice);
     if (!result.valid) {
       setValidation(result);
+      setDrawError(null);
+      return;
+    }
+
+    const drawResult = drawAssignments(participants);
+    if (!drawResult.ok) {
+      setValidation(null);
+      setDrawError(drawResult.error);
       return;
     }
 
     setValidation(null);
-    const assigned = drawAssignments(participants);
+    setDrawError(null);
+
+    const trimmedTitle = exchangeTitle.trim();
     const trimmedDate = exchangeDate.trim();
     const payload: ExchangePayload = {
+      ...(trimmedTitle ? { titulo: trimmedTitle } : {}),
       precioMinimo: Number(minPrice),
       moneda: currency,
       ...(trimmedDate ? { fechaIntercambio: trimmedDate } : {}),
-      participantes: assigned,
+      participantes: drawResult.assigned,
     };
 
     const encodedHash = encodePayloadToHash(payload);
@@ -211,15 +302,7 @@ export default function App() {
 
   const handleCreateNew = () => {
     clearUrlHash();
-    setMinPrice('250');
-    setCurrency('$');
-    setExchangeDate('');
-    setParticipants([
-      createEmptyParticipant(0),
-      createEmptyParticipant(1),
-      createEmptyParticipant(2),
-    ]);
-    setValidation(null);
+    handleResetDraft();
     setConfirmedPayload(null);
     setShareUrl('');
     setHashPayload(null);
@@ -237,12 +320,19 @@ export default function App() {
     }
   };
 
+  const scrollToSection = (sectionId: string) => {
+    const el = document.getElementById(sectionId);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth' });
+    }
+  };
+
   const isDark = theme === 'dark';
 
   return (
     <div className="min-h-screen flex flex-col bg-[#FAF8F4] dark:bg-[#131210] text-[#1A1816] dark:text-[#F3EFE7] transition-colors duration-200">
-      <header className="border-b border-[#E4DFD5] dark:border-[#2A2621] bg-[#FAF8F4]/90 dark:bg-[#131210]/90 backdrop-blur-sm transition-colors duration-200">
-        <div className="max-w-6xl mx-auto px-4 sm:px-8 h-16 flex items-center justify-between gap-4 sm:gap-6">
+      <header className="sticky top-0 z-30 border-b border-[#E4DFD5] dark:border-[#2A2621] bg-[#FAF8F4]/92 dark:bg-[#131210]/92 backdrop-blur-md transition-colors duration-200">
+        <div className="max-w-6xl mx-auto px-4 sm:px-8 h-16 flex items-center justify-between gap-6">
           <a
             href={typeof window !== 'undefined' ? window.location.pathname : '/'}
             onClick={(e) => {
@@ -310,12 +400,37 @@ export default function App() {
             </span>
           </a>
 
-          <div className="flex items-center gap-3 sm:gap-4 shrink-0">
-            {view === 'setup' ? (
-              <span className="hidden md:inline text-xs text-[#6E685F] dark:text-[#A39B8F] whitespace-nowrap">
-                Sin cuentas ni servidores · Enlace privado
-              </span>
-            ) : (
+          {view === 'setup' && (
+            <nav
+              aria-label="Secciones principales"
+              className="hidden md:flex items-center gap-6 text-sm font-medium text-[#57524A] dark:text-[#B5ADA1]"
+            >
+              <button
+                type="button"
+                onClick={() => scrollToSection('organizar')}
+                className="hover:text-[#1A1816] dark:hover:text-[#F3EFE7] hover:underline underline-offset-4 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+              >
+                Organizar
+              </button>
+              <button
+                type="button"
+                onClick={() => scrollToSection('como-funciona')}
+                className="hover:text-[#1A1816] dark:hover:text-[#F3EFE7] hover:underline underline-offset-4 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+              >
+                Cómo funciona
+              </button>
+              <button
+                type="button"
+                onClick={() => scrollToSection('preguntas')}
+                className="hover:text-[#1A1816] dark:hover:text-[#F3EFE7] hover:underline underline-offset-4 transition-colors cursor-pointer whitespace-nowrap shrink-0"
+              >
+                Preguntas
+              </button>
+            </nav>
+          )}
+
+          <div className="flex items-center gap-3 shrink-0">
+            {view !== 'setup' && (
               <button
                 type="button"
                 onClick={handleCreateNew}
@@ -348,17 +463,21 @@ export default function App() {
       <main className="flex-1 w-full max-w-6xl mx-auto px-4 sm:px-8 py-8 sm:py-12">
         {view === 'setup' && (
           <SetupView
+            exchangeTitle={exchangeTitle}
             minPrice={minPrice}
             currency={currency}
             exchangeDate={exchangeDate}
             participants={participants}
             validation={validation}
+            drawError={drawError}
+            onExchangeTitleChange={setExchangeTitle}
             onMinPriceChange={handleMinPriceChange}
             onCurrencyChange={setCurrency}
             onExchangeDateChange={setExchangeDate}
             onParticipantChange={handleParticipantChange}
             onAddParticipant={handleAddParticipant}
             onRemoveParticipant={handleRemoveParticipant}
+            onResetDraft={handleResetDraft}
             onStartDraw={handleStartDraw}
           />
         )}

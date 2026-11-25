@@ -17,6 +17,7 @@ export function createEmptyParticipant(index?: number): ParticipantInput {
     name: '',
     message: '',
     likes: '',
+    excludeId: '',
   };
 }
 
@@ -148,6 +149,11 @@ export function decodePayloadFromHash(hash: string): {
       };
     }
 
+    const validTitle =
+      typeof parsed.titulo === 'string' && parsed.titulo.trim().length > 0
+        ? parsed.titulo.trim()
+        : undefined;
+
     const validDate =
       typeof parsed.fechaIntercambio === 'string' &&
       formatExchangeDate(parsed.fechaIntercambio) !== null
@@ -156,6 +162,7 @@ export function decodePayloadFromHash(hash: string): {
 
     return {
       data: {
+        ...(validTitle ? { titulo: validTitle } : {}),
         precioMinimo: parsed.precioMinimo,
         moneda: validCurrency,
         ...(validDate ? { fechaIntercambio: validDate } : {}),
@@ -240,41 +247,90 @@ export function validateSetup(
 }
 
 /**
- * Realiza el sorteo garantizando que nadie se toque a sí mismo
- * y que cada participante reciba exactamente a un receptor único.
+ * Realiza el sorteo garantizando que nadie se toque a sí mismo,
+ * respetando exclusiones opcionales y asignando un receptor único a cada participante.
  */
-export function drawAssignments(participants: ParticipantInput[]): EncodedParticipant[] {
+export function drawAssignments(
+  participants: ParticipantInput[]
+): { ok: true; assigned: EncodedParticipant[] } | { ok: false; error: string } {
   const n = participants.length;
   if (n < 3) {
-    throw new Error('Se necesitan al menos 3 participantes.');
+    return {
+      ok: false,
+      error: 'Se necesitan al menos 3 participantes para realizar el sorteo.',
+    };
   }
 
-  const indices = Array.from({ length: n }, (_, i) => i);
-  let valid = false;
-  let attempts = 0;
+  const idToIndex = new Map<string, number>();
+  participants.forEach((p, idx) => idToIndex.set(p.id, idx));
 
-  while (!valid && attempts < 1000) {
-    attempts++;
-    for (let i = n - 1; i > 0; i--) {
+  const allowedTargets: number[][] = participants.map((p, giverIdx) => {
+    const excludedIdx = p.excludeId ? idToIndex.get(p.excludeId) : undefined;
+    const targets: number[] = [];
+    for (let targetIdx = 0; targetIdx < n; targetIdx++) {
+      if (targetIdx !== giverIdx && targetIdx !== excludedIdx) {
+        targets.push(targetIdx);
+      }
+    }
+    return targets;
+  });
+
+  if (allowedTargets.some((list) => list.length === 0)) {
+    return {
+      ok: false,
+      error:
+        'Las exclusiones elegidas dejan a un participante sin posibles receptores. Ajusta las restricciones.',
+    };
+  }
+
+  // Ordenar por menor cantidad de opciones (MRV) para resolver restricciones rápidamente
+  const order = Array.from({ length: n }, (_, i) => i).sort(
+    (a, b) => allowedTargets[a].length - allowedTargets[b].length
+  );
+
+  const assignment = new Array<number>(n).fill(-1);
+  const used = new Array<boolean>(n).fill(false);
+  let steps = 0;
+  const maxSteps = 50000;
+
+  function backtrack(pos: number): boolean {
+    if (steps++ > maxSteps) return false;
+    if (pos === n) return true;
+
+    const giver = order[pos];
+    const candidates = allowedTargets[giver].filter((t) => !used[t]);
+    for (let i = candidates.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
-      [indices[i], indices[j]] = [indices[j], indices[i]];
+      [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
     }
-    valid = indices.every((targetIdx, giverIdx) => targetIdx !== giverIdx);
+
+    for (const target of candidates) {
+      used[target] = true;
+      assignment[giver] = target;
+      if (backtrack(pos + 1)) return true;
+      used[target] = false;
+      assignment[giver] = -1;
+    }
+    return false;
   }
 
-  if (!valid) {
-    const offset = 1 + Math.floor(Math.random() * (n - 1));
-    for (let i = 0; i < n; i++) {
-      indices[i] = (i + offset) % n;
-    }
+  const solved = backtrack(0);
+  if (!solved) {
+    return {
+      ok: false,
+      error:
+        'No es posible completar un sorteo sin repeticiones con las exclusiones seleccionadas. Quita o cambia alguna exclusión.',
+    };
   }
 
-  return participants.map((p, i) => ({
+  const assigned = participants.map((p, i) => ({
     nombre: p.name.trim().replace(/\s+/g, ' '),
     mensaje: p.message.trim(),
     gustos: p.likes.trim(),
-    asignado: participants[indices[i]].name.trim().replace(/\s+/g, ' '),
+    asignado: participants[assignment[i]].name.trim().replace(/\s+/g, ' '),
   }));
+
+  return { ok: true, assigned };
 }
 
 export function findParticipantMatch(
@@ -293,6 +349,19 @@ export function findParticipantMatch(
   return (
     payload.participantes.find((p) => normalizeNameLoose(p.nombre) === loose) ?? null
   );
+}
+
+export function buildInvitationMessage(payload: ExchangePayload, shareUrl: string): string {
+  const titleLine = payload.titulo
+    ? `Te invito al intercambio "${payload.titulo}".`
+    : 'Te invito a nuestro intercambio de Amigo Secreto.';
+  const priceText = formatPrice(payload.precioMinimo, payload.moneda);
+  const dateText = formatExchangeDate(payload.fechaIntercambio);
+  const details = dateText
+    ? `Presupuesto mínimo: ${priceText} · Fecha: ${dateText}`
+    : `Presupuesto mínimo: ${priceText}`;
+
+  return `${titleLine}\n${details}\n\nEntra al enlace y escribe tu nombre para descubrir en privado a quién te toca regalar:\n${shareUrl}`;
 }
 
 export async function copyTextToClipboard(text: string): Promise<boolean> {

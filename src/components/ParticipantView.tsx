@@ -146,7 +146,7 @@ export const ParticipantView: React.FC<ParticipantViewProps> = ({
               </div>
               <div>
                 <p className="text-xs font-medium tracking-widest uppercase text-[#1B4332] dark:text-[#84D2AA]">
-                  Acceso privado
+                  {payload.titulo ? payload.titulo : 'Acceso privado'}
                 </p>
                 <p className="text-xs text-[#6E685F] dark:text-[#A39B8F] tabular-nums">
                   {payload.participantes.length} participantes · Mínimo {formattedMinPrice}
@@ -286,7 +286,9 @@ export const ParticipantView: React.FC<ParticipantViewProps> = ({
             <div className="flex items-start justify-between gap-4 pb-5 border-b border-[#EFECE6] dark:border-[#2A2621]">
               <div>
                 <p className="text-xs font-medium tracking-widest uppercase text-[#6E685F] dark:text-[#A39B8F]">
-                  Tarjeta privada de {activeGiver.nombre}
+                  {payload.titulo
+                    ? `${payload.titulo} · Tarjeta de ${activeGiver.nombre}`
+                    : `Tarjeta privada de ${activeGiver.nombre}`}
                 </p>
                 <p className="mt-1 text-sm text-[#57524A] dark:text-[#B5ADA1]">
                   Asegúrate de que nadie más esté mirando la pantalla.

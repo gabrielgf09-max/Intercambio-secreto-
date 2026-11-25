@@ -5,6 +5,7 @@ export interface ParticipantInput {
   name: string;
   message: string;
   likes: string;
+  excludeId?: string;
 }
 
 export interface EncodedParticipant {
@@ -15,6 +16,7 @@ export interface EncodedParticipant {
 }
 
 export interface ExchangePayload {
+  titulo?: string;
   precioMinimo: number;
   moneda: CurrencyCode;
   fechaIntercambio?: string;

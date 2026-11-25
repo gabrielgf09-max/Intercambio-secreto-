@@ -1,8 +1,22 @@
 import React, { useState } from 'react';
-import { Check, Copy, ArrowLeft, PlusCircle, Lock, ExternalLink } from 'lucide-react';
+import {
+  Check,
+  Copy,
+  ArrowLeft,
+  PlusCircle,
+  Lock,
+  ExternalLink,
+  Share2,
+  MessageCircle,
+} from 'lucide-react';
 import { motion } from 'motion/react';
 import { ExchangePayload } from '../types';
-import { copyTextToClipboard, formatExchangeDate, formatPrice } from '../utils/exchange';
+import {
+  buildInvitationMessage,
+  copyTextToClipboard,
+  formatExchangeDate,
+  formatPrice,
+} from '../utils/exchange';
 
 interface ConfirmationViewProps {
   payload: ExchangePayload;
@@ -19,15 +33,43 @@ export const ConfirmationView: React.FC<ConfirmationViewProps> = ({
   onCreateNew,
   onPreviewParticipantView,
 }) => {
-  const [copied, setCopied] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
+  const [copiedInvite, setCopiedInvite] = useState(false);
 
-  const handleCopy = async () => {
+  const canNativeShare =
+    typeof navigator !== 'undefined' && typeof navigator.share === 'function';
+
+  const handleCopyLink = async () => {
     const ok = await copyTextToClipboard(shareUrl);
     if (ok) {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2600);
+      setCopiedLink(true);
+      setTimeout(() => setCopiedLink(false), 2600);
     }
   };
+
+  const handleCopyInvite = async () => {
+    const message = buildInvitationMessage(payload, shareUrl);
+    const ok = await copyTextToClipboard(message);
+    if (ok) {
+      setCopiedInvite(true);
+      setTimeout(() => setCopiedInvite(false), 2600);
+    }
+  };
+
+  const handleNativeShare = async () => {
+    if (!canNativeShare) return;
+    try {
+      await navigator.share({
+        title: payload.titulo || 'Amigo Secreto',
+        text: buildInvitationMessage(payload, shareUrl),
+        url: shareUrl,
+      });
+    } catch {
+      // Ignored if user cancels share sheet
+    }
+  };
+
+  const formattedDate = formatExchangeDate(payload.fechaIntercambio);
 
   return (
     <motion.div
@@ -44,7 +86,7 @@ export const ConfirmationView: React.FC<ConfirmationViewProps> = ({
             </div>
             <div>
               <p className="text-xs font-medium tracking-widest uppercase text-[#1B4332] dark:text-[#84D2AA]">
-                Sorteo completado
+                {payload.titulo ? payload.titulo : 'Sorteo completado'}
               </p>
               <h1 className="font-display text-2xl sm:text-3xl font-semibold text-[#1A1816] dark:text-[#F3EFE7]">
                 Enlace listo para compartir
@@ -62,10 +104,10 @@ export const ConfirmationView: React.FC<ConfirmationViewProps> = ({
             <span className="tabular-nums">
               Regalo mínimo {formatPrice(payload.precioMinimo, payload.moneda)}
             </span>
-            {formatExchangeDate(payload.fechaIntercambio) && (
+            {formattedDate && (
               <>
                 <span aria-hidden="true">·</span>
-                <span>{formatExchangeDate(payload.fechaIntercambio)}</span>
+                <span>{formattedDate}</span>
               </>
             )}
             <span aria-hidden="true">·</span>
@@ -91,14 +133,14 @@ export const ConfirmationView: React.FC<ConfirmationViewProps> = ({
               />
               <button
                 type="button"
-                onClick={handleCopy}
+                onClick={handleCopyLink}
                 className={`min-h-[48px] px-5 py-3 rounded-xl font-semibold text-sm inline-flex items-center justify-center gap-2 transition-all cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1B4332] dark:focus-visible:ring-[#74C69D] ${
-                  copied
+                  copiedLink
                     ? 'bg-[#143326] dark:bg-[#22523D] text-white'
                     : 'bg-[#1B4332] hover:bg-[#143326] dark:bg-[#2D6A4F] dark:hover:bg-[#38805F] text-white active:scale-[0.99]'
                 }`}
               >
-                {copied ? (
+                {copiedLink ? (
                   <>
                     <Check className="w-4 h-4 shrink-0" aria-hidden="true" />
                     <span>Enlace copiado</span>
@@ -111,10 +153,53 @@ export const ConfirmationView: React.FC<ConfirmationViewProps> = ({
                 )}
               </button>
             </div>
+
+            <div className="mt-3 flex flex-wrap items-center gap-2.5">
+              <button
+                type="button"
+                onClick={handleCopyInvite}
+                className="min-h-[42px] px-4 py-2 bg-[#FAF8F4] dark:bg-[#141311] hover:bg-[#EFECE6] dark:hover:bg-[#23201C] border border-[#DDD6CA] dark:border-[#343029] text-[#1A1816] dark:text-[#F3EFE7] text-xs sm:text-sm font-medium rounded-xl inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap"
+              >
+                {copiedInvite ? (
+                  <>
+                    <Check
+                      className="w-4 h-4 text-[#1B4332] dark:text-[#84D2AA]"
+                      aria-hidden="true"
+                    />
+                    <span>Invitación copiada</span>
+                  </>
+                ) : (
+                  <>
+                    <MessageCircle
+                      className="w-4 h-4 text-[#1B4332] dark:text-[#84D2AA]"
+                      aria-hidden="true"
+                    />
+                    <span>Copiar mensaje de invitación</span>
+                  </>
+                )}
+              </button>
+
+              {canNativeShare && (
+                <button
+                  type="button"
+                  onClick={handleNativeShare}
+                  className="min-h-[42px] px-4 py-2 bg-[#FAF8F4] dark:bg-[#141311] hover:bg-[#EFECE6] dark:hover:bg-[#23201C] border border-[#DDD6CA] dark:border-[#343029] text-[#1A1816] dark:text-[#F3EFE7] text-xs sm:text-sm font-medium rounded-xl inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap"
+                >
+                  <Share2
+                    className="w-4 h-4 text-[#1B4332] dark:text-[#84D2AA]"
+                    aria-hidden="true"
+                  />
+                  <span>Compartir</span>
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="p-4 sm:p-5 rounded-2xl bg-[#FAF8F4] dark:bg-[#141311] border border-[#EAE4D9] dark:border-[#2C2822] flex items-start gap-3.5">
-            <Lock className="w-5 h-5 text-[#1B4332] dark:text-[#84D2AA] shrink-0 mt-0.5" aria-hidden="true" />
+            <Lock
+              className="w-5 h-5 text-[#1B4332] dark:text-[#84D2AA] shrink-0 mt-0.5"
+              aria-hidden="true"
+            />
             <div className="text-sm text-[#57524A] dark:text-[#B5ADA1] leading-relaxed space-y-1">
               <p className="font-semibold text-[#1A1816] dark:text-[#F3EFE7]">
                 Privacidad protegida también para ti
