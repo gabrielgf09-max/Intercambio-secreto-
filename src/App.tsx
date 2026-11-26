@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Moon, Sun } from 'lucide-react';
+import { Moon, Sun, Users, Shuffle } from 'lucide-react';
 import { AppView, CurrencyCode, ExchangePayload, ParticipantInput } from './types';
 import {
   CURRENCY_OPTIONS,
@@ -11,9 +11,12 @@ import {
   encodePayloadToHash,
   validateSetup,
 } from './utils/exchange';
+import { normalizeRoomCode } from './services/rooms';
 import { SetupView } from './components/SetupView';
 import { ConfirmationView } from './components/ConfirmationView';
 import { ParticipantView } from './components/ParticipantView';
+import { RoomWorkspace } from './components/RoomWorkspace';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 const THEME_STORAGE_KEY = 'amigo-secreto-theme';
 const DRAFT_STORAGE_KEY = 'amigo-secreto-draft';
@@ -94,22 +97,46 @@ function getInitialTheme(): ThemeMode {
   return 'light';
 }
 
-function getInitialHashState(): {
+function parseRoomCodeFromLocation(): string | null {
+  if (typeof window === 'undefined') return null;
+  const hash = window.location.hash;
+  if (hash && hash.toLowerCase().startsWith('#sala=')) {
+    const code = normalizeRoomCode(hash.slice(6));
+    return code.length >= 4 ? code : null;
+  }
+  const params = new URLSearchParams(window.location.search);
+  const queryRoom = params.get('sala');
+  if (queryRoom) {
+    const code = normalizeRoomCode(queryRoom);
+    return code.length >= 4 ? code : null;
+  }
+  return null;
+}
+
+function getInitialRouteState(): {
   view: AppView;
+  roomCode: string | null;
   payload: ExchangePayload | null;
   error: string | null;
   needsAsync: boolean;
 } {
   if (typeof window === 'undefined') {
-    return { view: 'setup', payload: null, error: null, needsAsync: false };
+    return { view: 'setup', roomCode: null, payload: null, error: null, needsAsync: false };
   }
+
+  const roomCode = parseRoomCodeFromLocation();
+  if (roomCode) {
+    return { view: 'rooms', roomCode, payload: null, error: null, needsAsync: false };
+  }
+
   const hash = window.location.hash;
   if (!hash || hash === '#') {
-    return { view: 'setup', payload: null, error: null, needsAsync: false };
+    return { view: 'setup', roomCode: null, payload: null, error: null, needsAsync: false };
   }
   const decoded = decodePayloadFromHashSync(hash);
   return {
     view: 'participant',
+    roomCode: null,
     payload: decoded.data,
     error: decoded.error,
     needsAsync: decoded.needsAsync,
@@ -119,7 +146,7 @@ function getInitialHashState(): {
 function clearUrlHash() {
   if (typeof window === 'undefined') return;
   try {
-    const cleanUrl = window.location.pathname + window.location.search;
+    const cleanUrl = window.location.pathname;
     window.history.replaceState(null, '', cleanUrl);
   } catch {
     window.location.hash = '';
@@ -131,16 +158,19 @@ function setUrlHashSilently(encodedHash: string) {
   try {
     window.history.replaceState(null, '', `#${encodedHash}`);
   } catch {
-    // Keep confirmation screen intact even if replaceState is restricted
+    // Keep current screen intact even if replaceState is restricted
   }
 }
 
 export default function App() {
-  const initialState = useMemo(() => getInitialHashState(), []);
+  const initialState = useMemo(() => getInitialRouteState(), []);
   const initialDraft = useMemo(() => loadSavedDraft(), []);
 
   const [theme, setTheme] = useState<ThemeMode>(() => getInitialTheme());
   const [view, setView] = useState<AppView>(initialState.view);
+  const [activeRoomCode, setActiveRoomCode] = useState<string | null>(
+    initialState.roomCode
+  );
   const [exchangeTitle, setExchangeTitle] = useState<string>(initialDraft.exchangeTitle);
   const [minPrice, setMinPrice] = useState<string>(initialDraft.minPrice);
   const [currency, setCurrency] = useState<CurrencyCode>(initialDraft.currency);
@@ -194,8 +224,19 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
 
-    const loadHash = async (hash: string) => {
+    const loadLocationHash = async (hash: string) => {
+      const roomCode = parseRoomCodeFromLocation();
+      if (roomCode) {
+        setActiveRoomCode(roomCode);
+        setHashPayload(null);
+        setHashError(null);
+        setIsDecodingHash(false);
+        setView('rooms');
+        return;
+      }
+
       if (!hash || hash === '#') {
+        setActiveRoomCode(null);
         setHashPayload(null);
         setHashError(null);
         setIsDecodingHash(false);
@@ -205,6 +246,7 @@ export default function App() {
 
       const syncRes = decodePayloadFromHashSync(hash);
       if (!syncRes.needsAsync) {
+        setActiveRoomCode(null);
         setHashPayload(syncRes.data);
         setHashError(syncRes.error);
         setIsDecodingHash(false);
@@ -212,6 +254,7 @@ export default function App() {
         return;
       }
 
+      setActiveRoomCode(null);
       setIsDecodingHash(true);
       setView('participant');
       const asyncRes = await decodePayloadFromHash(hash);
@@ -223,11 +266,11 @@ export default function App() {
     };
 
     if (initialState.needsAsync && typeof window !== 'undefined') {
-      void loadHash(window.location.hash);
+      void loadLocationHash(window.location.hash);
     }
 
     const handleHashChange = () => {
-      void loadHash(window.location.hash);
+      void loadLocationHash(window.location.hash);
     };
 
     window.addEventListener('hashchange', handleHashChange);
@@ -337,6 +380,7 @@ export default function App() {
   const handleCreateNew = () => {
     clearUrlHash();
     handleResetDraft();
+    setActiveRoomCode(null);
     setConfirmedPayload(null);
     setShareUrl('');
     setHashPayload(null);
@@ -354,6 +398,28 @@ export default function App() {
     }
   };
 
+  const handleSwitchMode = (target: 'setup' | 'rooms') => {
+    if (target === 'setup') {
+      clearUrlHash();
+      setActiveRoomCode(null);
+      setView('setup');
+    } else {
+      clearUrlHash();
+      setActiveRoomCode(null);
+      setView('rooms');
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleRoomCodeChange = (code: string | null) => {
+    setActiveRoomCode(code);
+    if (code) {
+      setUrlHashSilently(`sala=${code}`);
+    } else {
+      clearUrlHash();
+    }
+  };
+
   const scrollToSection = (sectionId: string) => {
     const el = document.getElementById(sectionId);
     if (el) {
@@ -362,6 +428,8 @@ export default function App() {
   };
 
   const isDark = theme === 'dark';
+  const showModeSwitcher =
+    view === 'setup' || (view === 'rooms' && !activeRoomCode);
 
   return (
     <div className="min-h-screen flex flex-col bg-[#FAF8F4] dark:bg-[#131210] text-[#1A1816] dark:text-[#F3EFE7] transition-colors duration-200">
@@ -464,7 +532,7 @@ export default function App() {
           )}
 
           <div className="flex items-center gap-3 shrink-0">
-            {view !== 'setup' && (
+            {(view === 'confirm' || view === 'participant') && (
               <button
                 type="button"
                 onClick={handleCreateNew}
@@ -495,50 +563,103 @@ export default function App() {
       </header>
 
       <main className="flex-1 w-full max-w-6xl mx-auto px-4 sm:px-8 py-8 sm:py-12">
-        {view === 'setup' && (
-          <SetupView
-            exchangeTitle={exchangeTitle}
-            minPrice={minPrice}
-            currency={currency}
-            exchangeDate={exchangeDate}
-            participants={participants}
-            validation={validation}
-            drawError={drawError}
-            onExchangeTitleChange={setExchangeTitle}
-            onMinPriceChange={handleMinPriceChange}
-            onCurrencyChange={setCurrency}
-            onExchangeDateChange={setExchangeDate}
-            onParticipantChange={handleParticipantChange}
-            onAddParticipant={handleAddParticipant}
-            onRemoveParticipant={handleRemoveParticipant}
-            onResetDraft={handleResetDraft}
-            onStartDraw={handleStartDraw}
-          />
+        {showModeSwitcher && (
+          <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
+            <div
+              role="tablist"
+              aria-label="Modo de intercambio"
+              className="inline-flex items-center gap-1 p-1 bg-[#EFECE6] dark:bg-[#1C1A17] border border-[#E4DFD5] dark:border-[#2E2A24] rounded-xl"
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={view === 'setup'}
+                onClick={() => handleSwitchMode('setup')}
+                className={`min-h-[40px] px-4 py-2 text-xs sm:text-sm font-medium rounded-lg inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                  view === 'setup'
+                    ? 'bg-white dark:bg-[#292621] text-[#1A1816] dark:text-[#F3EFE7] shadow-sm'
+                    : 'text-[#57524A] dark:text-[#A39B8F] hover:text-[#1A1816] dark:hover:text-[#F3EFE7]'
+                }`}
+              >
+                <Shuffle className="w-3.5 h-3.5" aria-hidden="true" />
+                <span>Sorteo rápido</span>
+              </button>
+
+              <button
+                type="button"
+                role="tab"
+                aria-selected={view === 'rooms'}
+                onClick={() => handleSwitchMode('rooms')}
+                className={`min-h-[40px] px-4 py-2 text-xs sm:text-sm font-medium rounded-lg inline-flex items-center gap-2 transition-colors cursor-pointer whitespace-nowrap shrink-0 ${
+                  view === 'rooms'
+                    ? 'bg-white dark:bg-[#292621] text-[#1A1816] dark:text-[#F3EFE7] shadow-sm'
+                    : 'text-[#57524A] dark:text-[#A39B8F] hover:text-[#1A1816] dark:hover:text-[#F3EFE7]'
+                }`}
+              >
+                <Users className="w-3.5 h-3.5" aria-hidden="true" />
+                <span>Sala con auto-registro</span>
+              </button>
+            </div>
+          </div>
         )}
 
-        {view === 'confirm' && confirmedPayload && (
-          <ConfirmationView
-            payload={confirmedPayload}
-            shareUrl={shareUrl}
-            onBackToEdit={handleBackToEdit}
-            onCreateNew={handleCreateNew}
-            onPreviewParticipantView={handlePreviewParticipantView}
-          />
-        )}
+        <ErrorBoundary>
+          {view === 'setup' && (
+            <SetupView
+              exchangeTitle={exchangeTitle}
+              minPrice={minPrice}
+              currency={currency}
+              exchangeDate={exchangeDate}
+              participants={participants}
+              validation={validation}
+              drawError={drawError}
+              onExchangeTitleChange={setExchangeTitle}
+              onMinPriceChange={handleMinPriceChange}
+              onCurrencyChange={setCurrency}
+              onExchangeDateChange={setExchangeDate}
+              onParticipantChange={handleParticipantChange}
+              onAddParticipant={handleAddParticipant}
+              onRemoveParticipant={handleRemoveParticipant}
+              onResetDraft={handleResetDraft}
+              onStartDraw={handleStartDraw}
+            />
+          )}
 
-        {view === 'participant' && (
-          <ParticipantView
-            payload={hashPayload}
-            decodeError={hashError}
-            isLoading={isDecodingHash}
-            onCreateNewExchange={handleCreateNew}
-          />
-        )}
+          {view === 'confirm' && confirmedPayload && (
+            <ConfirmationView
+              payload={confirmedPayload}
+              shareUrl={shareUrl}
+              onBackToEdit={handleBackToEdit}
+              onCreateNew={handleCreateNew}
+              onPreviewParticipantView={handlePreviewParticipantView}
+            />
+          )}
+
+          {view === 'participant' && (
+            <ParticipantView
+              payload={hashPayload}
+              decodeError={hashError}
+              isLoading={isDecodingHash}
+              onCreateNewExchange={handleCreateNew}
+            />
+          )}
+
+          {view === 'rooms' && (
+            <RoomWorkspace
+              initialRoomCode={activeRoomCode}
+              onRoomCodeChange={handleRoomCodeChange}
+            />
+          )}
+        </ErrorBoundary>
       </main>
 
       <footer className="border-t border-[#E4DFD5] dark:border-[#2A2621] py-6 transition-colors duration-200">
         <div className="max-w-6xl mx-auto px-4 sm:px-8 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-[#6E685F] dark:text-[#A39B8F]">
-          <span>Todos los datos viajan codificados en el enlace del navegador.</span>
+          <span>
+            {view === 'rooms'
+              ? 'Salas sincronizadas en tiempo real con perfiles privados.'
+              : 'Todos los datos viajan codificados en el enlace del navegador.'}
+          </span>
           <span>Amigo Secreto</span>
         </div>
       </footer>

@@ -1,0 +1,262 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global safety net: default deny everything
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Core primitives
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isEmailVerified() {
+      return request.auth.token.email_verified == true;
+    }
+
+    function isValidRoom(data) {
+      return data.keys().hasAll([
+        'code',
+        'title',
+        'minPrice',
+        'currency',
+        'exchangeDate',
+        'organizerUid',
+        'organizerName',
+        'status',
+        'createdAt',
+        'updatedAt'
+      ])
+      && data.keys().hasOnly([
+        'code',
+        'title',
+        'minPrice',
+        'currency',
+        'exchangeDate',
+        'organizerUid',
+        'organizerName',
+        'status',
+        'createdAt',
+        'updatedAt'
+      ])
+      && data.code is string && data.code.size() >= 4 && data.code.size() <= 20 && data.code.matches('^[A-Z0-9_\\-]+$')
+      && data.title is string && data.title.size() >= 1 && data.title.size() <= 80
+      && data.minPrice is number && data.minPrice >= 0
+      && data.currency is string && data.currency.size() >= 1 && data.currency.size() <= 8
+      && data.exchangeDate is string && data.exchangeDate.size() <= 10 && data.exchangeDate.matches('^(|\\d{4}-\\d{2}-\\d{2})$')
+      && data.organizerUid is string && data.organizerUid.size() >= 1 && data.organizerUid.size() <= 128
+      && data.organizerName is string && data.organizerName.size() >= 1 && data.organizerName.size() <= 80
+      && data.status in ['open', 'drawn']
+      && data.createdAt is timestamp
+      && data.updatedAt is timestamp;
+    }
+
+    function isValidParticipant(data) {
+      return data.keys().hasAll([
+        'uid',
+        'organizerUid',
+        'name',
+        'likes',
+        'restrictions',
+        'message',
+        'joinedAt',
+        'updatedAt'
+      ])
+      && data.keys().hasOnly([
+        'uid',
+        'organizerUid',
+        'name',
+        'likes',
+        'restrictions',
+        'message',
+        'joinedAt',
+        'updatedAt'
+      ])
+      && data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128
+      && data.organizerUid is string && data.organizerUid.size() >= 1 && data.organizerUid.size() <= 128
+      && data.name is string && data.name.size() >= 1 && data.name.size() <= 80
+      && data.likes is string && data.likes.size() <= 600
+      && data.restrictions is string && data.restrictions.size() <= 400
+      && data.message is string && data.message.size() <= 600
+      && data.joinedAt is timestamp
+      && data.updatedAt is timestamp;
+    }
+
+    function isValidAssignment(data) {
+      return data.keys().hasAll([
+        'giverUid',
+        'giverName',
+        'organizerUid',
+        'recipientUid',
+        'recipientName',
+        'recipientLikes',
+        'recipientRestrictions',
+        'recipientMessage',
+        'createdAt'
+      ])
+      && data.keys().hasOnly([
+        'giverUid',
+        'giverName',
+        'organizerUid',
+        'recipientUid',
+        'recipientName',
+        'recipientLikes',
+        'recipientRestrictions',
+        'recipientMessage',
+        'createdAt'
+      ])
+      && data.giverUid is string && data.giverUid.size() >= 1 && data.giverUid.size() <= 128
+      && data.giverName is string && data.giverName.size() >= 1 && data.giverName.size() <= 80
+      && data.organizerUid is string && data.organizerUid.size() >= 1 && data.organizerUid.size() <= 128
+      && data.recipientUid is string && data.recipientUid.size() >= 1 && data.recipientUid.size() <= 128
+      && data.recipientName is string && data.recipientName.size() >= 1 && data.recipientName.size() <= 80
+      && data.recipientLikes is string && data.recipientLikes.size() <= 600
+      && data.recipientRestrictions is string && data.recipientRestrictions.size() <= 400
+      && data.recipientMessage is string && data.recipientMessage.size() <= 600
+      && data.createdAt is timestamp;
+    }
+
+    match /rooms/{roomId} {
+      allow get: if isSignedIn() && isValidId(roomId);
+      allow list: if isSignedIn() && existing().organizerUid == request.auth.uid;
+
+      allow create: if isSignedIn()
+        && isEmailVerified()
+        && isValidId(roomId)
+        && isValidRoom(incoming())
+        && incoming().code == roomId
+        && incoming().organizerUid == request.auth.uid
+        && incoming().status == 'open'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isSignedIn()
+        && isEmailVerified()
+        && isValidId(roomId)
+        && isValidRoom(incoming())
+        && existing().organizerUid == request.auth.uid
+        && existing().status == 'open'
+        && incoming().organizerUid == existing().organizerUid
+        && incoming().code == existing().code
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          (incoming().status == 'open'
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'title',
+              'minPrice',
+              'currency',
+              'exchangeDate',
+              'organizerName',
+              'updatedAt'
+            ]))
+          ||
+          (incoming().status == 'drawn'
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'status',
+              'updatedAt'
+            ]))
+        );
+
+      allow delete: if false;
+
+      match /participants/{participantUid} {
+        allow get: if isSignedIn()
+          && isValidId(roomId)
+          && isValidId(participantUid)
+          && (
+            request.auth.uid == participantUid
+            || get(/databases/$(database)/documents/rooms/$(roomId)).data.organizerUid == request.auth.uid
+          );
+
+        allow list: if isSignedIn()
+          && (
+            existing().uid == request.auth.uid
+            || existing().organizerUid == request.auth.uid
+          );
+
+        allow create: if isSignedIn()
+          && isEmailVerified()
+          && isValidId(roomId)
+          && isValidId(participantUid)
+          && isValidParticipant(incoming())
+          && participantUid == request.auth.uid
+          && incoming().uid == request.auth.uid
+          && incoming().joinedAt == request.time
+          && incoming().updatedAt == request.time
+          && exists(/databases/$(database)/documents/rooms/$(roomId))
+          && get(/databases/$(database)/documents/rooms/$(roomId)).data.status == 'open'
+          && incoming().organizerUid == get(/databases/$(database)/documents/rooms/$(roomId)).data.organizerUid;
+
+        allow update: if isSignedIn()
+          && isEmailVerified()
+          && isValidId(roomId)
+          && isValidId(participantUid)
+          && isValidParticipant(incoming())
+          && request.auth.uid == participantUid
+          && incoming().uid == existing().uid
+          && incoming().organizerUid == existing().organizerUid
+          && incoming().joinedAt == existing().joinedAt
+          && incoming().updatedAt == request.time
+          && get(/databases/$(database)/documents/rooms/$(roomId)).data.status == 'open'
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'name',
+            'likes',
+            'restrictions',
+            'message',
+            'updatedAt'
+          ]);
+
+        allow delete: if isSignedIn()
+          && isEmailVerified()
+          && isValidId(roomId)
+          && isValidId(participantUid)
+          && (
+            request.auth.uid == participantUid
+            || existing().organizerUid == request.auth.uid
+          )
+          && get(/databases/$(database)/documents/rooms/$(roomId)).data.status == 'open';
+      }
+
+      match /assignments/{giverUid} {
+        allow get: if isSignedIn()
+          && isValidId(roomId)
+          && isValidId(giverUid)
+          && request.auth.uid == giverUid;
+
+        allow list: if isSignedIn()
+          && existing().giverUid == request.auth.uid;
+
+        allow create: if isSignedIn()
+          && isEmailVerified()
+          && isValidId(roomId)
+          && isValidId(giverUid)
+          && isValidAssignment(incoming())
+          && incoming().organizerUid == request.auth.uid
+          && incoming().giverUid == giverUid
+          && incoming().giverUid != incoming().recipientUid
+          && incoming().createdAt == request.time
+          && get(/databases/$(database)/documents/rooms/$(roomId)).data.organizerUid == request.auth.uid
+          && get(/databases/$(database)/documents/rooms/$(roomId)).data.status == 'open'
+          && getAfter(/databases/$(database)/documents/rooms/$(roomId)).data.status == 'drawn';
+
+        allow update: if false;
+        allow delete: if false;
+      }
+    }
+  }
+}

@@ -1,0 +1,227 @@
+{
+  "entities": {
+    "Room": {
+      "title": "Room",
+      "description": "An independent Secret Santa event room where participants self-register via invite code or link.",
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "description": "Unique uppercase alphanumeric room invitation code.",
+          "minLength": 4,
+          "maxLength": 20,
+          "pattern": "^[A-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "description": "Display title of the gift exchange room.",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "minPrice": {
+          "type": "number",
+          "description": "Minimum gift budget amount."
+        },
+        "currency": {
+          "type": "string",
+          "description": "Currency symbol or code for the gift budget.",
+          "minLength": 1,
+          "maxLength": 8
+        },
+        "exchangeDate": {
+          "type": "string",
+          "description": "Optional exchange date in YYYY-MM-DD format or empty string.",
+          "maxLength": 10,
+          "pattern": "^(|\\d{4}-\\d{2}-\\d{2})$"
+        },
+        "organizerUid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the organizer who created the room.",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "organizerName": {
+          "type": "string",
+          "description": "Display name of the room organizer.",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "status": {
+          "type": "string",
+          "description": "Lifecycle state of the room.",
+          "enum": ["open", "drawn"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the room was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the room was last updated."
+        }
+      },
+      "required": [
+        "code",
+        "title",
+        "minPrice",
+        "currency",
+        "exchangeDate",
+        "organizerUid",
+        "organizerName",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "RoomParticipant": {
+      "title": "RoomParticipant",
+      "description": "Self-registered participant profile inside a Secret Santa room.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the participant.",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "organizerUid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the parent room organizer.",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "name": {
+          "type": "string",
+          "description": "Participant display name.",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "likes": {
+          "type": "string",
+          "description": "Gift wishlist and preferences.",
+          "maxLength": 600
+        },
+        "restrictions": {
+          "type": "string",
+          "description": "Allergies or gift restrictions.",
+          "maxLength": 400
+        },
+        "message": {
+          "type": "string",
+          "description": "Personal note or hint for the Secret Santa.",
+          "maxLength": 600
+        },
+        "joinedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the participant joined."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the profile was last updated."
+        }
+      },
+      "required": [
+        "uid",
+        "organizerUid",
+        "name",
+        "likes",
+        "restrictions",
+        "message",
+        "joinedAt",
+        "updatedAt"
+      ]
+    },
+    "RoomAssignment": {
+      "title": "RoomAssignment",
+      "description": "Private Secret Santa assignment readable only by the assigned giver.",
+      "type": "object",
+      "properties": {
+        "giverUid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the participant giving the gift.",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "giverName": {
+          "type": "string",
+          "description": "Display name of the giver.",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "organizerUid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the room organizer.",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "recipientUid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the assigned recipient.",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "recipientName": {
+          "type": "string",
+          "description": "Display name of the assigned recipient.",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "recipientLikes": {
+          "type": "string",
+          "description": "Wishlist and gift ideas submitted by the recipient.",
+          "maxLength": 600
+        },
+        "recipientRestrictions": {
+          "type": "string",
+          "description": "Gift restrictions or allergies submitted by the recipient.",
+          "maxLength": 400
+        },
+        "recipientMessage": {
+          "type": "string",
+          "description": "Personal message submitted by the recipient.",
+          "maxLength": 600
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the draw assignment was created."
+        }
+      },
+      "required": [
+        "giverUid",
+        "giverName",
+        "organizerUid",
+        "recipientUid",
+        "recipientName",
+        "recipientLikes",
+        "recipientRestrictions",
+        "recipientMessage",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/rooms/{roomId}": {
+      "schema": {
+        "$ref": "#/entities/Room"
+      },
+      "description": "Shared Secret Santa event rooms identified by invite code."
+    },
+    "/rooms/{roomId}/participants/{participantUid}": {
+      "schema": {
+        "$ref": "#/entities/RoomParticipant"
+      },
+      "description": "Independent self-registered participants linked to a room."
+    },
+    "/rooms/{roomId}/assignments/{giverUid}": {
+      "schema": {
+        "$ref": "#/entities/RoomAssignment"
+      },
+      "description": "Private Secret Santa assignment records readable solely by giverUid."
+    }
+  }
+}
