@@ -6,6 +6,7 @@ import {
   ValidationResult,
   createEmptyParticipant,
   decodePayloadFromHash,
+  decodePayloadFromHashSync,
   drawAssignments,
   encodePayloadToHash,
   validateSetup,
@@ -97,19 +98,21 @@ function getInitialHashState(): {
   view: AppView;
   payload: ExchangePayload | null;
   error: string | null;
+  needsAsync: boolean;
 } {
   if (typeof window === 'undefined') {
-    return { view: 'setup', payload: null, error: null };
+    return { view: 'setup', payload: null, error: null, needsAsync: false };
   }
   const hash = window.location.hash;
   if (!hash || hash === '#') {
-    return { view: 'setup', payload: null, error: null };
+    return { view: 'setup', payload: null, error: null, needsAsync: false };
   }
-  const decoded = decodePayloadFromHash(hash);
+  const decoded = decodePayloadFromHashSync(hash);
   return {
     view: 'participant',
     payload: decoded.data,
     error: decoded.error,
+    needsAsync: decoded.needsAsync,
   };
 }
 
@@ -155,6 +158,9 @@ export default function App() {
     initialState.payload
   );
   const [hashError, setHashError] = useState<string | null>(initialState.error);
+  const [isDecodingHash, setIsDecodingHash] = useState<boolean>(
+    initialState.needsAsync
+  );
 
   useEffect(() => {
     const root = document.documentElement;
@@ -186,23 +192,50 @@ export default function App() {
   }, [exchangeTitle, minPrice, currency, exchangeDate, participants]);
 
   useEffect(() => {
-    const handleHashChange = () => {
-      const hash = window.location.hash;
+    let cancelled = false;
+
+    const loadHash = async (hash: string) => {
       if (!hash || hash === '#') {
         setHashPayload(null);
         setHashError(null);
+        setIsDecodingHash(false);
         setView('setup');
         return;
       }
-      const decoded = decodePayloadFromHash(hash);
-      setHashPayload(decoded.data);
-      setHashError(decoded.error);
+
+      const syncRes = decodePayloadFromHashSync(hash);
+      if (!syncRes.needsAsync) {
+        setHashPayload(syncRes.data);
+        setHashError(syncRes.error);
+        setIsDecodingHash(false);
+        setView('participant');
+        return;
+      }
+
+      setIsDecodingHash(true);
       setView('participant');
+      const asyncRes = await decodePayloadFromHash(hash);
+      if (!cancelled) {
+        setHashPayload(asyncRes.data);
+        setHashError(asyncRes.error);
+        setIsDecodingHash(false);
+      }
+    };
+
+    if (initialState.needsAsync && typeof window !== 'undefined') {
+      void loadHash(window.location.hash);
+    }
+
+    const handleHashChange = () => {
+      void loadHash(window.location.hash);
     };
 
     window.addEventListener('hashchange', handleHashChange);
-    return () => window.removeEventListener('hashchange', handleHashChange);
-  }, []);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('hashchange', handleHashChange);
+    };
+  }, [initialState.needsAsync]);
 
   const handleToggleTheme = () => {
     setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
@@ -253,7 +286,7 @@ export default function App() {
     setDrawError(null);
   };
 
-  const handleStartDraw = () => {
+  const handleStartDraw = async () => {
     const result = validateSetup(participants, minPrice);
     if (!result.valid) {
       setValidation(result);
@@ -281,7 +314,7 @@ export default function App() {
       participantes: drawResult.assigned,
     };
 
-    const encodedHash = encodePayloadToHash(payload);
+    const encodedHash = await encodePayloadToHash(payload);
     const baseUrl = window.location.href.split('#')[0];
     const fullUrl = `${baseUrl}#${encodedHash}`;
     setUrlHashSilently(encodedHash);
@@ -290,6 +323,7 @@ export default function App() {
     setShareUrl(fullUrl);
     setHashPayload(payload);
     setHashError(null);
+    setIsDecodingHash(false);
     setView('confirm');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -496,6 +530,7 @@ export default function App() {
           <ParticipantView
             payload={hashPayload}
             decodeError={hashError}
+            isLoading={isDecodingHash}
             onCreateNewExchange={handleCreateNew}
           />
         )}

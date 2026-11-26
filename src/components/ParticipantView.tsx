@@ -24,12 +24,14 @@ import {
 interface ParticipantViewProps {
   payload: ExchangePayload | null;
   decodeError: string | null;
+  isLoading?: boolean;
   onCreateNewExchange: () => void;
 }
 
 export const ParticipantView: React.FC<ParticipantViewProps> = ({
   payload,
   decodeError,
+  isLoading = false,
   onCreateNewExchange,
 }) => {
   const [nameInput, setNameInput] = useState('');
@@ -64,6 +66,19 @@ export const ParticipantView: React.FC<ParticipantViewProps> = ({
       ) ?? null
     );
   }, [payload, activeGiver]);
+
+  if (isLoading) {
+    return (
+      <div className="max-w-lg mx-auto bg-white dark:bg-[#1C1A17] border border-[#E4DFD5] dark:border-[#2E2A24] rounded-3xl p-8 text-center">
+        <div className="w-11 h-11 rounded-2xl bg-[#1B4332]/10 dark:bg-[#74C69D]/14 text-[#1B4332] dark:text-[#84D2AA] flex items-center justify-center mx-auto mb-3">
+          <Gift className="w-5 h-5" aria-hidden="true" />
+        </div>
+        <p className="text-sm font-medium text-[#57524A] dark:text-[#B5ADA1]">
+          Abriendo información del intercambio…
+        </p>
+      </div>
+    );
+  }
 
   if (decodeError || !payload) {
     return (

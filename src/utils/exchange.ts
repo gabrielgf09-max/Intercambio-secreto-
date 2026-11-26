@@ -11,6 +11,19 @@ export const CURRENCY_OPTIONS: { value: CurrencyCode; label: string }[] = [
   { value: 'PEN', label: 'PEN (S/)' },
 ];
 
+type CompactParticipantTuple =
+  | [string, number]
+  | [string, number, string]
+  | [string, number, string, string];
+
+type CompactPayloadTuple = [
+  number,
+  number | string,
+  CompactParticipantTuple[],
+  string?,
+  string?,
+];
+
 export function createEmptyParticipant(index?: number): ParticipantInput {
   return {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}-${index ?? 0}`,
@@ -68,12 +81,7 @@ export function formatExchangeDate(isoDate?: string): string | null {
   return formatted.charAt(0).toUpperCase() + formatted.slice(1);
 }
 
-/**
- * Codifica un objeto JSON a Base64 URL-safe con soporte completo UTF-8.
- */
-export function encodePayloadToHash(payload: ExchangePayload): string {
-  const json = JSON.stringify(payload);
-  const bytes = new TextEncoder().encode(json);
+function bytesToBase64Url(bytes: Uint8Array): string {
   let binary = '';
   for (let i = 0; i < bytes.length; i++) {
     binary += String.fromCharCode(bytes[i]);
@@ -84,92 +92,339 @@ export function encodePayloadToHash(payload: ExchangePayload): string {
     .replace(/=+$/, '');
 }
 
+function base64UrlToBytes(input: string): Uint8Array {
+  const base64 = input.replace(/-/g, '+').replace(/_/g, '/');
+  const padLength = (4 - (base64.length % 4)) % 4;
+  const padded = base64 + '='.repeat(padLength);
+  const binary = atob(padded);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+async function compressDeflateRaw(bytes: Uint8Array): Promise<Uint8Array | null> {
+  if (typeof CompressionStream === 'undefined') return null;
+  try {
+    const stream = new CompressionStream('deflate-raw');
+    const writer = stream.writable.getWriter();
+    const copy = new Uint8Array(bytes.byteLength);
+    copy.set(bytes);
+    await writer.write(copy);
+    await writer.close();
+    const buffer = await new Response(stream.readable).arrayBuffer();
+    return new Uint8Array(buffer);
+  } catch {
+    return null;
+  }
+}
+
+async function decompressDeflateRaw(bytes: Uint8Array): Promise<Uint8Array> {
+  if (typeof DecompressionStream === 'undefined') {
+    throw new Error('Tu navegador no soporta la descompresión de este enlace.');
+  }
+  const stream = new DecompressionStream('deflate-raw');
+  const writer = stream.writable.getWriter();
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  await writer.write(copy);
+  await writer.close();
+  const buffer = await new Response(stream.readable).arrayBuffer();
+  return new Uint8Array(buffer);
+}
+
+function toCompactTuple(payload: ExchangePayload): CompactPayloadTuple | null {
+  const nameToIndex = new Map<string, number>();
+  payload.participantes.forEach((p, idx) => {
+    nameToIndex.set(normalizeName(p.nombre), idx);
+  });
+
+  const participantTuples: CompactParticipantTuple[] = [];
+  for (const p of payload.participantes) {
+    const targetIdx = nameToIndex.get(normalizeName(p.asignado));
+    if (targetIdx === undefined) {
+      return null;
+    }
+    const nombre = p.nombre.trim();
+    const gustos = p.gustos.trim();
+    const mensaje = p.mensaje.trim();
+
+    if (mensaje) {
+      participantTuples.push([nombre, targetIdx, gustos, mensaje]);
+    } else if (gustos) {
+      participantTuples.push([nombre, targetIdx, gustos]);
+    } else {
+      participantTuples.push([nombre, targetIdx]);
+    }
+  }
+
+  const currencyIdx = CURRENCY_OPTIONS.findIndex((c) => c.value === payload.moneda);
+  const compactCurrency: number | string = currencyIdx >= 0 ? currencyIdx : payload.moneda;
+  const compactDate = payload.fechaIntercambio
+    ? payload.fechaIntercambio.replace(/-/g, '')
+    : '';
+  const compactTitle = payload.titulo ? payload.titulo.trim() : '';
+
+  const tuple: CompactPayloadTuple = [
+    payload.precioMinimo,
+    compactCurrency,
+    participantTuples,
+  ];
+
+  if (compactTitle) {
+    tuple.push(compactDate, compactTitle);
+  } else if (compactDate) {
+    tuple.push(compactDate);
+  }
+
+  return tuple;
+}
+
+function fromCompactTuple(parsed: unknown): ExchangePayload | null {
+  if (!Array.isArray(parsed) || parsed.length < 3) return null;
+
+  const [rawPrice, rawCurrency, rawParticipants, rawDate, rawTitle] = parsed;
+
+  if (typeof rawPrice !== 'number' || !Number.isFinite(rawPrice) || rawPrice < 0) {
+    return null;
+  }
+
+  let moneda: CurrencyCode = '$';
+  if (typeof rawCurrency === 'number' && CURRENCY_OPTIONS[rawCurrency]) {
+    moneda = CURRENCY_OPTIONS[rawCurrency].value;
+  } else if (
+    typeof rawCurrency === 'string' &&
+    CURRENCY_OPTIONS.some((c) => c.value === rawCurrency)
+  ) {
+    moneda = rawCurrency as CurrencyCode;
+  }
+
+  if (!Array.isArray(rawParticipants) || rawParticipants.length < 3) {
+    return null;
+  }
+
+  const names = rawParticipants.map((item) =>
+    Array.isArray(item) && typeof item[0] === 'string' ? item[0].trim() : ''
+  );
+
+  if (names.some((n) => !n)) return null;
+
+  const participantes: EncodedParticipant[] = [];
+  for (let i = 0; i < rawParticipants.length; i++) {
+    const item = rawParticipants[i];
+    if (!Array.isArray(item) || typeof item[1] !== 'number') return null;
+    const targetIdx = item[1];
+    if (
+      !Number.isInteger(targetIdx) ||
+      targetIdx < 0 ||
+      targetIdx >= names.length
+    ) {
+      return null;
+    }
+
+    const gustos = typeof item[2] === 'string' ? item[2].trim() : '';
+    const mensaje = typeof item[3] === 'string' ? item[3].trim() : '';
+
+    participantes.push({
+      nombre: names[i],
+      gustos,
+      mensaje,
+      asignado: names[targetIdx],
+    });
+  }
+
+  let fechaIntercambio: string | undefined;
+  if (typeof rawDate === 'string' && rawDate.trim()) {
+    const d = rawDate.trim();
+    const normalizedIso = /^\d{8}$/.test(d)
+      ? `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`
+      : d;
+    if (formatExchangeDate(normalizedIso) !== null) {
+      fechaIntercambio = normalizedIso;
+    }
+  }
+
+  const titulo =
+    typeof rawTitle === 'string' && rawTitle.trim().length > 0
+      ? rawTitle.trim()
+      : undefined;
+
+  return {
+    ...(titulo ? { titulo } : {}),
+    precioMinimo: rawPrice,
+    moneda,
+    ...(fechaIntercambio ? { fechaIntercambio } : {}),
+    participantes,
+  };
+}
+
+function validateLegacyPayload(parsed: Partial<ExchangePayload>): ExchangePayload | null {
+  if (
+    !parsed ||
+    typeof parsed.precioMinimo !== 'number' ||
+    !Number.isFinite(parsed.precioMinimo) ||
+    parsed.precioMinimo < 0 ||
+    !Array.isArray(parsed.participantes) ||
+    parsed.participantes.length < 3
+  ) {
+    return null;
+  }
+
+  const validCurrency = CURRENCY_OPTIONS.some((c) => c.value === parsed.moneda)
+    ? (parsed.moneda as CurrencyCode)
+    : '$';
+
+  const participantes: EncodedParticipant[] = parsed.participantes.map((p) => ({
+    nombre: typeof p?.nombre === 'string' ? p.nombre.trim() : '',
+    mensaje: typeof p?.mensaje === 'string' ? p.mensaje.trim() : '',
+    gustos: typeof p?.gustos === 'string' ? p.gustos.trim() : '',
+    asignado: typeof p?.asignado === 'string' ? p.asignado.trim() : '',
+  }));
+
+  if (participantes.some((p) => !p.nombre || !p.asignado)) {
+    return null;
+  }
+
+  const validTitle =
+    typeof parsed.titulo === 'string' && parsed.titulo.trim().length > 0
+      ? parsed.titulo.trim()
+      : undefined;
+
+  const validDate =
+    typeof parsed.fechaIntercambio === 'string' &&
+    formatExchangeDate(parsed.fechaIntercambio) !== null
+      ? parsed.fechaIntercambio.trim()
+      : undefined;
+
+  return {
+    ...(validTitle ? { titulo: validTitle } : {}),
+    precioMinimo: parsed.precioMinimo,
+    moneda: validCurrency,
+    ...(validDate ? { fechaIntercambio: validDate } : {}),
+    participantes,
+  };
+}
+
+function cleanRawHash(hash: string): string {
+  let clean = (hash.startsWith('#') ? hash.slice(1) : hash).replace(/\s+/g, '');
+  if (clean.includes('%')) {
+    try {
+      clean = decodeURIComponent(clean);
+    } catch {
+      // Keep original if percent-decoding fails
+    }
+  }
+  return clean;
+}
+
 /**
- * Decodifica el hash de la URL desde Base64 URL-safe UTF-8 y valida su estructura.
+ * Codifica el sorteo de la forma más corta posible (tupla compacta + compresión deflate-raw
+ * cuando reduce el tamaño) en Base64 URL-safe con soporte completo UTF-8.
  */
-export function decodePayloadFromHash(hash: string): {
+export async function encodePayloadToHash(payload: ExchangePayload): Promise<string> {
+  const compactTuple = toCompactTuple(payload);
+  const rawJson = JSON.stringify(compactTuple ?? payload);
+  const rawBytes = new TextEncoder().encode(rawJson);
+  const rawPrefix = compactTuple ? 'c' : '';
+  const rawEncoded = rawPrefix + bytesToBase64Url(rawBytes);
+
+  if (compactTuple) {
+    const compressedBytes = await compressDeflateRaw(rawBytes);
+    if (compressedBytes && compressedBytes.length < rawBytes.length) {
+      const compressedEncoded = 'z' + bytesToBase64Url(compressedBytes);
+      if (compressedEncoded.length < rawEncoded.length) {
+        return compressedEncoded;
+      }
+    }
+  }
+
+  return rawEncoded;
+}
+
+export function isCompressedHash(hash: string): boolean {
+  const clean = cleanRawHash(hash);
+  return clean.startsWith('z');
+}
+
+/**
+ * Decodificación síncrona rápida para enlaces sin compresión ('c...') o legado JSON.
+ */
+export function decodePayloadFromHashSync(hash: string): {
   data: ExchangePayload | null;
   error: string | null;
+  needsAsync: boolean;
 } {
-  let clean = (hash.startsWith('#') ? hash.slice(1) : hash).replace(/\s+/g, '');
+  const clean = cleanRawHash(hash);
+  if (!clean) {
+    return { data: null, error: null, needsAsync: false };
+  }
+
+  if (clean.startsWith('z')) {
+    return { data: null, error: null, needsAsync: true };
+  }
+
+  try {
+    const isCompact = clean.startsWith('c');
+    const encodedPart = isCompact ? clean.slice(1) : clean;
+    const bytes = base64UrlToBytes(encodedPart);
+    const json = new TextDecoder().decode(bytes);
+    const parsed = JSON.parse(json);
+
+    const validated = isCompact
+      ? fromCompactTuple(parsed)
+      : validateLegacyPayload(parsed as Partial<ExchangePayload>);
+
+    if (!validated) {
+      return {
+        data: null,
+        error: 'El enlace del sorteo está incompleto o no contiene participantes válidos.',
+        needsAsync: false,
+      };
+    }
+
+    return { data: validated, error: null, needsAsync: false };
+  } catch {
+    return {
+      data: null,
+      error: 'No pudimos leer este enlace de sorteo. Es posible que esté incompleto.',
+      needsAsync: false,
+    };
+  }
+}
+
+/**
+ * Decodifica enlaces en cualquier formato ('z...' comprimido, 'c...' compacto o legado JSON).
+ */
+export async function decodePayloadFromHash(hash: string): Promise<{
+  data: ExchangePayload | null;
+  error: string | null;
+}> {
+  const clean = cleanRawHash(hash);
   if (!clean) {
     return { data: null, error: null };
   }
 
+  if (!clean.startsWith('z')) {
+    const syncRes = decodePayloadFromHashSync(hash);
+    return { data: syncRes.data, error: syncRes.error };
+  }
+
   try {
-    if (clean.includes('%')) {
-      try {
-        clean = decodeURIComponent(clean);
-      } catch {
-        // Keep original string if percent-decoding fails
-      }
-    }
+    const compressedBytes = base64UrlToBytes(clean.slice(1));
+    const decompressedBytes = await decompressDeflateRaw(compressedBytes);
+    const json = new TextDecoder().decode(decompressedBytes);
+    const parsed = JSON.parse(json);
+    const validated = fromCompactTuple(parsed);
 
-    const base64 = clean.replace(/-/g, '+').replace(/_/g, '/');
-    const padLength = (4 - (base64.length % 4)) % 4;
-    const padded = base64 + '='.repeat(padLength);
-    const binary = atob(padded);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-      bytes[i] = binary.charCodeAt(i);
-    }
-    const json = new TextDecoder().decode(bytes);
-    const parsed = JSON.parse(json) as Partial<ExchangePayload>;
-
-    if (
-      !parsed ||
-      typeof parsed.precioMinimo !== 'number' ||
-      !Number.isFinite(parsed.precioMinimo) ||
-      parsed.precioMinimo < 0 ||
-      !Array.isArray(parsed.participantes) ||
-      parsed.participantes.length < 3
-    ) {
+    if (!validated) {
       return {
         data: null,
-        error: 'El enlace del sorteo está incompleto o no contiene participantes válidos.',
+        error: 'Los datos de este sorteo están dañados o incompletos.',
       };
     }
 
-    const validCurrency = CURRENCY_OPTIONS.some((c) => c.value === parsed.moneda)
-      ? (parsed.moneda as CurrencyCode)
-      : '$';
-
-    const participantes: EncodedParticipant[] = parsed.participantes.map((p) => ({
-      nombre: typeof p?.nombre === 'string' ? p.nombre.trim() : '',
-      mensaje: typeof p?.mensaje === 'string' ? p.mensaje.trim() : '',
-      gustos: typeof p?.gustos === 'string' ? p.gustos.trim() : '',
-      asignado: typeof p?.asignado === 'string' ? p.asignado.trim() : '',
-    }));
-
-    const hasInvalid = participantes.some((p) => !p.nombre || !p.asignado);
-    if (hasInvalid) {
-      return {
-        data: null,
-        error: 'Los datos de este sorteo están dañados o les faltan asignaciones.',
-      };
-    }
-
-    const validTitle =
-      typeof parsed.titulo === 'string' && parsed.titulo.trim().length > 0
-        ? parsed.titulo.trim()
-        : undefined;
-
-    const validDate =
-      typeof parsed.fechaIntercambio === 'string' &&
-      formatExchangeDate(parsed.fechaIntercambio) !== null
-        ? parsed.fechaIntercambio.trim()
-        : undefined;
-
-    return {
-      data: {
-        ...(validTitle ? { titulo: validTitle } : {}),
-        precioMinimo: parsed.precioMinimo,
-        moneda: validCurrency,
-        ...(validDate ? { fechaIntercambio: validDate } : {}),
-        participantes,
-      },
-      error: null,
-    };
+    return { data: validated, error: null };
   } catch {
     return {
       data: null,
@@ -283,7 +538,6 @@ export function drawAssignments(
     };
   }
 
-  // Ordenar por menor cantidad de opciones (MRV) para resolver restricciones rápidamente
   const order = Array.from({ length: n }, (_, i) => i).sort(
     (a, b) => allowedTargets[a].length - allowedTargets[b].length
   );
