@@ -1,5 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { User, onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
+import {
+  User,
+  getRedirectResult,
+  onAuthStateChanged,
+  signInWithPopup,
+  signInWithRedirect,
+  signOut,
+} from 'firebase/auth';
 import {
   AlertCircle,
   ArrowLeft,
@@ -105,6 +112,19 @@ export const RoomWorkspace: React.FC<RoomWorkspaceProps> = ({
       setUser(currentUser);
       setAuthReady(true);
     });
+
+    getRedirectResult(auth).catch((err: unknown) => {
+      const code =
+        typeof err === 'object' && err !== null && 'code' in err
+          ? String((err as { code: unknown }).code)
+          : '';
+      if (code === 'auth/unauthorized-domain') {
+        setAuthError(
+          `El dominio "${window.location.hostname}" aún no está autorizado en Firebase Authentication.`
+        );
+      }
+    });
+
     return () => unsubscribe();
   }, []);
 
@@ -204,13 +224,45 @@ export const RoomWorkspace: React.FC<RoomWorkspaceProps> = ({
 
   const handleSignIn = async () => {
     setAuthError(null);
+    // Llamar signInWithPopup inmediatamente dentro del clic del usuario
+    const popupPromise = signInWithPopup(auth, googleProvider);
     setSigningIn(true);
     try {
-      await signInWithPopup(auth, googleProvider);
-    } catch {
-      setAuthError(
-        'No se pudo completar el inicio de sesión con Google. Verifica que las ventanas emergentes estén permitidas e inténtalo de nuevo.'
-      );
+      await popupPromise;
+    } catch (err) {
+      const code =
+        typeof err === 'object' && err !== null && 'code' in err
+          ? String((err as { code: unknown }).code)
+          : '';
+      const isTopLevelWindow =
+        typeof window !== 'undefined' && window.self === window.top;
+
+      if (code === 'auth/popup-blocked') {
+        if (isTopLevelWindow) {
+          try {
+            await signInWithRedirect(auth, googleProvider);
+            return;
+          } catch {
+            setAuthError(
+              'El navegador bloqueó la ventana emergente de Google. Permite las ventanas emergentes en la barra de direcciones e inténtalo de nuevo.'
+            );
+          }
+        } else {
+          setAuthError(
+            'Tu navegador bloqueó la ventana emergente de Google. Por seguridad del navegador, las webs no pueden desbloquearlas automáticamente: haz clic en el icono de ventana bloqueada en la barra de direcciones o abre la app en una pestaña directa.'
+          );
+        }
+      } else if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+        setAuthError('Se cerró la ventana de Google antes de completar el acceso. Inténtalo de nuevo.');
+      } else if (code === 'auth/unauthorized-domain') {
+        setAuthError(
+          `El dominio "${window.location.hostname}" no está autorizado en Firebase Authentication (Configuración > Dominios autorizados).`
+        );
+      } else {
+        setAuthError(
+          'No se pudo completar el inicio de sesión con Google. Verifica las ventanas emergentes e inténtalo de nuevo.'
+        );
+      }
     } finally {
       setSigningIn(false);
     }
