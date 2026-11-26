@@ -8,6 +8,7 @@
 5. `RoomAssignment` documents can only be created by the parent room's organizer in the exact atomic batch that transitions the parent room from `'open'` to `'drawn'` (`getAfter`), and `giverUid` can never equal `recipientUid`.
 6. Only the authenticated user matching `giverUid` may read their own `RoomAssignment` document; neither other participants nor the organizer can read someone else's assignment.
 7. List queries on `/rooms`, `/participants`, and `/assignments` never invoke `get()`/`exists()` and enforce `resource.data` ownership/membership directly.
+8. Only the email-verified organizer of a `Room` may delete the room; deleting `participants` of a `'drawn'` room or deleting `assignments` is permitted solely for the organizer within the same atomic batch that deletes the parent `Room` (`!existsAfter`).
 
 ## 2. The "Dirty Dozen" Attack Payloads
 1. Unauthenticated room creation (`request.auth == null`).

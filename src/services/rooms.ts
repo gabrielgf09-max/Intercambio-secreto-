@@ -4,6 +4,7 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  getDocs,
   onSnapshot,
   query,
   serverTimestamp,
@@ -320,6 +321,62 @@ export async function removeParticipantFromRoom(
     await deleteDoc(doc(db, 'rooms', code, 'participants', participantUid));
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
+  }
+}
+
+export async function closeAndDeleteRoom(
+  roomCode: string,
+  organizerUid: string
+): Promise<void> {
+  const code = normalizeRoomCode(roomCode);
+  const roomRef = doc(db, 'rooms', code);
+  const roomPath = `rooms/${code}`;
+
+  let roomStatus: 'open' | 'drawn' = 'open';
+  try {
+    const roomSnap = await getDoc(roomRef);
+    if (!roomSnap.exists()) {
+      return;
+    }
+    const data = roomSnap.data() as RoomDoc;
+    if (data.organizerUid !== organizerUid) {
+      throw new Error('Solo el organizador puede cerrar y eliminar esta sala.');
+    }
+    roomStatus = data.status;
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('Solo el organizador')) {
+      throw error;
+    }
+    handleFirestoreError(error, OperationType.GET, roomPath);
+  }
+
+  let participantIds: string[] = [];
+  const participantsPath = `rooms/${code}/participants`;
+  try {
+    const participantsSnap = await getDocs(
+      query(
+        collection(db, 'rooms', code, 'participants'),
+        where('organizerUid', '==', organizerUid)
+      )
+    );
+    participantIds = participantsSnap.docs.map((d) => d.id);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, participantsPath);
+  }
+
+  const batch = writeBatch(db);
+  for (const participantId of participantIds) {
+    batch.delete(doc(db, 'rooms', code, 'participants', participantId));
+    if (roomStatus === 'drawn') {
+      batch.delete(doc(db, 'rooms', code, 'assignments', participantId));
+    }
+  }
+  batch.delete(roomRef);
+
+  try {
+    await batch.commit();
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, roomPath);
   }
 }
 

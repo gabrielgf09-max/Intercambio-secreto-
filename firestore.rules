@@ -172,7 +172,10 @@ service cloud.firestore {
             ]))
         );
 
-      allow delete: if false;
+      allow delete: if isSignedIn()
+        && isEmailVerified()
+        && isValidId(roomId)
+        && existing().organizerUid == request.auth.uid;
 
       match /participants/{participantUid} {
         allow get: if isSignedIn()
@@ -226,10 +229,17 @@ service cloud.firestore {
           && isValidId(roomId)
           && isValidId(participantUid)
           && (
-            request.auth.uid == participantUid
-            || existing().organizerUid == request.auth.uid
-          )
-          && get(/databases/$(database)/documents/rooms/$(roomId)).data.status == 'open';
+            (
+              (request.auth.uid == participantUid || existing().organizerUid == request.auth.uid)
+              && get(/databases/$(database)/documents/rooms/$(roomId)).data.status == 'open'
+            )
+            ||
+            (
+              existing().organizerUid == request.auth.uid
+              && get(/databases/$(database)/documents/rooms/$(roomId)).data.organizerUid == request.auth.uid
+              && !existsAfter(/databases/$(database)/documents/rooms/$(roomId))
+            )
+          );
       }
 
       match /assignments/{giverUid} {
@@ -255,7 +265,14 @@ service cloud.firestore {
           && getAfter(/databases/$(database)/documents/rooms/$(roomId)).data.status == 'drawn';
 
         allow update: if false;
-        allow delete: if false;
+
+        allow delete: if isSignedIn()
+          && isEmailVerified()
+          && isValidId(roomId)
+          && isValidId(giverUid)
+          && existing().organizerUid == request.auth.uid
+          && get(/databases/$(database)/documents/rooms/$(roomId)).data.organizerUid == request.auth.uid
+          && !existsAfter(/databases/$(database)/documents/rooms/$(roomId));
       }
     }
   }

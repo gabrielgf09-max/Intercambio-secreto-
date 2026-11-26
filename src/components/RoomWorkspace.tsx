@@ -13,6 +13,7 @@ import {
   Calendar,
   Check,
   Copy,
+  ExternalLink,
   Gift,
   Heart,
   LogIn,
@@ -25,7 +26,7 @@ import {
   UserCheck,
   Users,
 } from 'lucide-react';
-import { auth, googleProvider } from '../firebase';
+import { auth, firebaseProjectId, googleProvider } from '../firebase';
 import {
   CurrencyCode,
   RoomAssignmentDoc,
@@ -40,6 +41,7 @@ import {
 } from '../utils/exchange';
 import {
   buildRoomInviteUrl,
+  closeAndDeleteRoom,
   createRoom,
   executeRoomDraw,
   normalizeRoomCode,
@@ -64,6 +66,8 @@ export const RoomWorkspace: React.FC<RoomWorkspaceProps> = ({
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [unauthorizedHost, setUnauthorizedHost] = useState<string | null>(null);
+  const [copiedDomain, setCopiedDomain] = useState(false);
   const [signingIn, setSigningIn] = useState(false);
 
   const [activeRoomCode, setActiveRoomCode] = useState<string | null>(
@@ -96,11 +100,15 @@ export const RoomWorkspace: React.FC<RoomWorkspaceProps> = ({
   const [profileSavedNotice, setProfileSavedNotice] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
 
-  // Draw & copy feedback
+  // Draw, copy & close room feedback
   const [drawing, setDrawing] = useState(false);
   const [drawError, setDrawError] = useState<string | null>(null);
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
+  const [confirmDeleteLobbyCode, setConfirmDeleteLobbyCode] = useState<string | null>(null);
+  const [deletingLobbyCode, setDeletingLobbyCode] = useState<string | null>(null);
+  const [confirmCloseActiveRoom, setConfirmCloseActiveRoom] = useState(false);
+  const [closingActiveRoom, setClosingActiveRoom] = useState(false);
 
   useEffect(() => {
     const normalized = initialRoomCode ? normalizeRoomCode(initialRoomCode) : null;
@@ -119,8 +127,9 @@ export const RoomWorkspace: React.FC<RoomWorkspaceProps> = ({
           ? String((err as { code: unknown }).code)
           : '';
       if (code === 'auth/unauthorized-domain') {
+        setUnauthorizedHost(window.location.hostname);
         setAuthError(
-          `El dominio "${window.location.hostname}" aún no está autorizado en Firebase Authentication.`
+          `El dominio "${window.location.hostname}" no está autorizado en Firebase Authentication (Configuración > Dominios autorizados).`
         );
       }
     });
@@ -224,6 +233,7 @@ export const RoomWorkspace: React.FC<RoomWorkspaceProps> = ({
 
   const handleSignIn = async () => {
     setAuthError(null);
+    setUnauthorizedHost(null);
     // Llamar signInWithPopup inmediatamente dentro del clic del usuario
     const popupPromise = signInWithPopup(auth, googleProvider);
     setSigningIn(true);
@@ -255,6 +265,7 @@ export const RoomWorkspace: React.FC<RoomWorkspaceProps> = ({
       } else if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
         setAuthError('Se cerró la ventana de Google antes de completar el acceso. Inténtalo de nuevo.');
       } else if (code === 'auth/unauthorized-domain') {
+        setUnauthorizedHost(window.location.hostname);
         setAuthError(
           `El dominio "${window.location.hostname}" no está autorizado en Firebase Authentication (Configuración > Dominios autorizados).`
         );
@@ -265,6 +276,14 @@ export const RoomWorkspace: React.FC<RoomWorkspaceProps> = ({
       }
     } finally {
       setSigningIn(false);
+    }
+  };
+
+  const handleCopyHost = async (host: string) => {
+    const ok = await copyTextToClipboard(host);
+    if (ok) {
+      setCopiedDomain(true);
+      setTimeout(() => setCopiedDomain(false), 2400);
     }
   };
 
@@ -279,6 +298,8 @@ export const RoomWorkspace: React.FC<RoomWorkspaceProps> = ({
     setDrawError(null);
     setProfileError(null);
     setProfileSavedNotice(false);
+    setConfirmDeleteLobbyCode(null);
+    setConfirmCloseActiveRoom(false);
     onRoomCodeChange(normalized);
   };
 
@@ -407,6 +428,39 @@ export const RoomWorkspace: React.FC<RoomWorkspaceProps> = ({
     }
   };
 
+  const handleCloseLobbyRoom = async (code: string) => {
+    if (!user) return;
+    setLobbyError(null);
+    setDeletingLobbyCode(code);
+    try {
+      await closeAndDeleteRoom(code, user.uid);
+      setConfirmDeleteLobbyCode(null);
+    } catch (err) {
+      setLobbyError(
+        err instanceof Error ? err.message : 'No se pudo cerrar y eliminar la sala.'
+      );
+    } finally {
+      setDeletingLobbyCode(null);
+    }
+  };
+
+  const handleCloseActiveRoom = async () => {
+    if (!user || !room) return;
+    setRoomError(null);
+    setClosingActiveRoom(true);
+    try {
+      await closeAndDeleteRoom(room.code, user.uid);
+      setConfirmCloseActiveRoom(false);
+      selectRoom(null);
+    } catch (err) {
+      setRoomError(
+        err instanceof Error ? err.message : 'No se pudo cerrar y eliminar la sala.'
+      );
+    } finally {
+      setClosingActiveRoom(false);
+    }
+  };
+
   if (!authReady) {
     return (
       <div className="max-w-lg mx-auto bg-white dark:bg-[#1C1A17] border border-[#E4DFD5] dark:border-[#2E2A24] rounded-3xl p-8 text-center">
@@ -447,10 +501,50 @@ export const RoomWorkspace: React.FC<RoomWorkspaceProps> = ({
         {authError && (
           <div
             role="alert"
-            className="mt-5 p-3.5 rounded-xl bg-[#9B2226]/6 dark:bg-[#9B2226]/18 border border-[#9B2226]/25 dark:border-[#E57373]/35 text-[#7F1D1D] dark:text-[#F7B2B2] text-xs sm:text-sm flex items-start gap-2.5"
+            className="mt-5 p-3.5 rounded-xl bg-[#9B2226]/6 dark:bg-[#9B2226]/18 border border-[#9B2226]/25 dark:border-[#E57373]/35 text-[#7F1D1D] dark:text-[#F7B2B2] text-xs sm:text-sm space-y-2.5"
           >
-            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" aria-hidden="true" />
-            <span>{authError}</span>
+            <div className="flex items-start gap-2.5">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" aria-hidden="true" />
+              <span>{authError}</span>
+            </div>
+            {unauthorizedHost && (
+              <div className="pl-6.5 space-y-2">
+                <p className="text-xs opacity-90">
+                  Agrega este dominio en Firebase Console &gt; Authentication &gt; Configuración &gt; Dominios autorizados:
+                </p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <code className="px-2 py-1 rounded-md bg-white/80 dark:bg-[#141210]/80 border border-[#9B2226]/20 dark:border-[#E57373]/25 font-mono text-xs select-all">
+                    {unauthorizedHost}
+                  </code>
+                  <button
+                    type="button"
+                    onClick={() => handleCopyHost(unauthorizedHost)}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-white/80 dark:bg-[#141210]/80 hover:bg-white dark:hover:bg-[#141210] border border-[#9B2226]/25 dark:border-[#E57373]/30 text-xs font-medium cursor-pointer transition-colors"
+                  >
+                    {copiedDomain ? (
+                      <>
+                        <Check className="w-3.5 h-3.5" aria-hidden="true" />
+                        <span>Copiado</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5" aria-hidden="true" />
+                        <span>Copiar dominio</span>
+                      </>
+                    )}
+                  </button>
+                  <a
+                    href={`https://console.firebase.google.com/project/${firebaseProjectId}/authentication/settings`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#9B2226] hover:bg-[#7F1D1D] text-white text-xs font-medium transition-colors"
+                  >
+                    <span>Abrir Firebase Auth</span>
+                    <ExternalLink className="w-3.5 h-3.5" aria-hidden="true" />
+                  </a>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -661,26 +755,74 @@ export const RoomWorkspace: React.FC<RoomWorkspaceProps> = ({
                 </p>
               ) : (
                 <div className="divide-y divide-[#EFECE6] dark:divide-[#2A2621]">
-                  {myRooms.map((item) => (
-                    <button
-                      key={item.code}
-                      type="button"
-                      onClick={() => selectRoom(item.code)}
-                      className="w-full py-3 text-left flex items-center justify-between gap-3 hover:bg-[#FAF8F4] dark:hover:bg-[#23201C] px-2 -mx-2 rounded-xl transition-colors cursor-pointer"
-                    >
-                      <div className="min-w-0">
-                        <p className="text-sm font-semibold text-[#1A1816] dark:text-[#F3EFE7] truncate">
-                          {item.title}
-                        </p>
-                        <p className="text-xs text-[#6E685F] dark:text-[#A39B8F] font-mono">
-                          {item.code} · {item.status === 'open' ? 'Abierta' : 'Sorteada'}
-                        </p>
+                  {myRooms.map((item) => {
+                    const isConfirming = confirmDeleteLobbyCode === item.code;
+                    const isDeleting = deletingLobbyCode === item.code;
+                    return (
+                      <div key={item.code} className="py-3 space-y-2.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <button
+                            type="button"
+                            onClick={() => selectRoom(item.code)}
+                            className="min-w-0 flex-1 text-left hover:bg-[#FAF8F4] dark:hover:bg-[#23201C] px-2 py-1 -mx-2 rounded-xl transition-colors cursor-pointer"
+                          >
+                            <p className="text-sm font-semibold text-[#1A1816] dark:text-[#F3EFE7] truncate">
+                              {item.title}
+                            </p>
+                            <p className="text-xs text-[#6E685F] dark:text-[#A39B8F] font-mono">
+                              {item.code} · {item.status === 'open' ? 'Abierta' : 'Sorteada'}
+                            </p>
+                          </button>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => selectRoom(item.code)}
+                              className="min-h-[34px] px-2.5 py-1 text-xs font-medium text-[#1B4332] dark:text-[#84D2AA] hover:bg-[#1B4332]/8 dark:hover:bg-[#74C69D]/12 rounded-lg transition-colors cursor-pointer"
+                            >
+                              Abrir
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setConfirmDeleteLobbyCode(isConfirming ? null : item.code)
+                              }
+                              aria-label={`Cerrar sala ${item.title}`}
+                              className="min-h-[34px] px-2.5 py-1 text-xs font-medium text-[#6E685F] dark:text-[#A39B8F] hover:text-[#9B2226] dark:hover:text-[#F28B82] hover:bg-[#9B2226]/6 dark:hover:bg-[#9B2226]/15 rounded-lg inline-flex items-center gap-1 transition-colors cursor-pointer"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+                              <span>Cerrar</span>
+                            </button>
+                          </div>
+                        </div>
+
+                        {isConfirming && (
+                          <div className="p-3 rounded-xl bg-[#9B2226]/6 dark:bg-[#9B2226]/18 border border-[#9B2226]/25 dark:border-[#E57373]/35 space-y-2">
+                            <p className="text-xs text-[#7F1D1D] dark:text-[#F7B2B2] leading-relaxed">
+                              ¿Cerrar y eliminar <strong>{item.title}</strong>? Se borrarán los registros y resultados de la sala.
+                            </p>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <button
+                                type="button"
+                                disabled={isDeleting}
+                                onClick={() => handleCloseLobbyRoom(item.code)}
+                                className="min-h-[34px] px-3 py-1 bg-[#9B2226] hover:bg-[#7F1D1D] disabled:opacity-60 text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer"
+                              >
+                                {isDeleting ? 'Eliminando…' : 'Eliminar sala'}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={isDeleting}
+                                onClick={() => setConfirmDeleteLobbyCode(null)}
+                                className="min-h-[34px] px-3 py-1 bg-white dark:bg-[#1C1A17] hover:bg-[#F2EFE9] dark:hover:bg-[#25221E] border border-[#D8D1C5] dark:border-[#343029] text-xs font-medium text-[#1A1816] dark:text-[#F3EFE7] rounded-lg transition-colors cursor-pointer"
+                              >
+                                Cancelar
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
-                      <span className="text-xs font-medium text-[#1B4332] dark:text-[#84D2AA] shrink-0">
-                        Abrir
-                      </span>
-                    </button>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -712,7 +854,7 @@ export const RoomWorkspace: React.FC<RoomWorkspaceProps> = ({
           Sala no encontrada
         </h2>
         <p className="mt-2 text-sm text-[#57524A] dark:text-[#B5ADA1]">
-          No existe ninguna sala con el código <strong className="font-mono">{activeRoomCode}</strong>. Revisa el código con quien te invitó.
+          No existe ninguna sala con el código <strong className="font-mono">{activeRoomCode}</strong> o fue cerrada por el organizador.
         </p>
         <button
           type="button"
@@ -756,15 +898,63 @@ export const RoomWorkspace: React.FC<RoomWorkspaceProps> = ({
             </p>
           </div>
 
-          <button
-            type="button"
-            onClick={() => selectRoom(null)}
-            className="min-h-[40px] px-3.5 py-2 bg-[#FAF8F4] dark:bg-[#141311] hover:bg-[#EFECE6] dark:hover:bg-[#23201C] border border-[#DDD6CA] dark:border-[#343029] text-xs font-medium text-[#1A1816] dark:text-[#F3EFE7] rounded-xl inline-flex items-center gap-1.5 transition-colors cursor-pointer shrink-0"
-          >
-            <ArrowLeft className="w-3.5 h-3.5" aria-hidden="true" />
-            <span>Mis salas</span>
-          </button>
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => selectRoom(null)}
+              className="min-h-[40px] px-3.5 py-2 bg-[#FAF8F4] dark:bg-[#141311] hover:bg-[#EFECE6] dark:hover:bg-[#23201C] border border-[#DDD6CA] dark:border-[#343029] text-xs font-medium text-[#1A1816] dark:text-[#F3EFE7] rounded-xl inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" aria-hidden="true" />
+              <span>Mis salas</span>
+            </button>
+
+            {isOrganizer && (
+              <button
+                type="button"
+                onClick={() => setConfirmCloseActiveRoom((prev) => !prev)}
+                className="min-h-[40px] px-3.5 py-2 bg-[#9B2226]/6 dark:bg-[#9B2226]/16 hover:bg-[#9B2226]/12 dark:hover:bg-[#9B2226]/24 border border-[#9B2226]/25 dark:border-[#E57373]/35 text-xs font-medium text-[#9B2226] dark:text-[#F28B82] rounded-xl inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+                <span>Cerrar sala</span>
+              </button>
+            )}
+          </div>
         </div>
+
+        {isOrganizer && confirmCloseActiveRoom && (
+          <div
+            role="region"
+            aria-label="Confirmar cierre de sala"
+            className="mt-5 p-4 rounded-2xl bg-[#9B2226]/6 dark:bg-[#9B2226]/18 border border-[#9B2226]/25 dark:border-[#E57373]/35 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+          >
+            <div className="space-y-1">
+              <p className="text-sm font-semibold text-[#7F1D1D] dark:text-[#F7B2B2]">
+                ¿Cerrar y eliminar esta sala definitivamente?
+              </p>
+              <p className="text-xs text-[#7F1D1D]/90 dark:text-[#F7B2B2]/90">
+                Se eliminarán la sala, las inscripciones y los resultados del sorteo. Esta acción no se puede deshacer.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <button
+                type="button"
+                disabled={closingActiveRoom}
+                onClick={handleCloseActiveRoom}
+                className="min-h-[40px] px-4 py-2 bg-[#9B2226] hover:bg-[#7F1D1D] disabled:opacity-60 text-white text-xs font-semibold rounded-xl transition-colors cursor-pointer"
+              >
+                {closingActiveRoom ? 'Cerrando sala…' : 'Sí, cerrar y eliminar'}
+              </button>
+              <button
+                type="button"
+                disabled={closingActiveRoom}
+                onClick={() => setConfirmCloseActiveRoom(false)}
+                className="min-h-[40px] px-4 py-2 bg-white dark:bg-[#1C1A17] hover:bg-[#F2EFE9] dark:hover:bg-[#25221E] border border-[#D8D1C5] dark:border-[#343029] text-xs font-medium text-[#1A1816] dark:text-[#F3EFE7] rounded-xl transition-colors cursor-pointer"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Barra de invitación */}
         <div className="mt-5 pt-5 border-t border-[#EFECE6] dark:border-[#2A2621] flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
